@@ -117,11 +117,15 @@ def query_openfda_interactions(ingredient):
         return "NO_DATA", "無資料"
     
 
-    # ==========================================
+# ==========================================
 # 4. AI 批次翻譯 FDA 警告
 # ==========================================
 def batch_translate_fda_warnings(drugs_to_translate):
-   
+    """
+    將收集到的 FDA 英文警告丟給 Gemini，
+    並強制 AI 將結果拆分成「衝突對象 (conflict_target)」與「警告描述 (warning_desc)」，
+    方便後續直接存入 Warning 資料表。
+    """
     if not drugs_to_translate:
         return {} 
         
@@ -134,16 +138,26 @@ def batch_translate_fda_warnings(drugs_to_translate):
         請幫我從這些資料中，精準「揪出」與其他藥物併用的衝突、以及重大疾病禁忌，並翻譯摘要成一般台灣長輩也能看懂的白話文。
 
         【嚴格排版規定】：
-        1. 不要拆分成分與後果，必須將「衝突的成分或特定疾病」與「發生的後果」寫在同一行。
-        2. 請挑選出 3~4 點「最嚴重或最常見」的交互作用或禁忌就好。
-        3. 每一點的說明請控制在一句話以內。
-        4. 開頭請統一使用「⚠️ 與【xxx】併用」或「⚠️ 【xxx】患者」。
+        請將每一個警告拆分成兩個欄位：
+        1. "conflict_target" (衝突對象)：例如「阿斯匹靈、抗凝血劑」、「胃部疾病患者」、「酒精」。字數越精簡越好。
+        2. "warning_desc" (警告描述)：說明併用後會發生什麼事。例如「會大幅增加嚴重胃出血的風險」。請控制在一句話以內。
+        
+        請挑選出 3~4 點「最嚴重或最常見」的交互作用就好，沒有衝突就不要硬寫。
 
-        請回傳一個 JSON 陣列，格式如下：
+        請回傳一個 JSON 陣列，格式必須完全符合以下結構：
         [
             {{
                 "drug_name": "你收到的原藥品名稱",
-                "summary": "⚠️ 與【阿斯匹靈】併用：會大幅增加嚴重胃出血的風險。\n⚠️ 【胃部疾病】患者：使用此藥引發嚴重出血的機率較高。"
+                "warnings": [
+                    {{
+                        "conflict_target": "阿斯匹靈、抗凝血劑",
+                        "warning_desc": "會大幅增加嚴重胃出血的風險。"
+                    }},
+                    {{
+                        "conflict_target": "肝功能不全患者",
+                        "warning_desc": "可能導致急性肝衰竭，請小心使用。"
+                    }}
+                ]
             }}
         ]
 
@@ -157,8 +171,10 @@ def batch_translate_fda_warnings(drugs_to_translate):
             generation_config=genai.GenerationConfig(response_mime_type="application/json")
         )
         translated_list = json.loads(response.text)
-        # 把結果轉成 dict 方便快速查找：{"Amoxicillin": "⚠️ ..."}
-        return {item['drug_name']: item['summary'] for item in translated_list}
+        
+        # 將結果整理成字典，方便主程式快速讀取
+        # 格式會變成: {"Amoxicillin": [{"conflict_target": "...", "warning_desc": "..."}, ...]}
+        return {item['drug_name']: item.get('warnings', []) for item in translated_list}
     except Exception as e:
-        print(f"❌ 批次翻譯失敗：{e}")
+        print(f"❌ 批次翻譯與格式化失敗：{e}")
         return {}
