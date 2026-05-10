@@ -5,17 +5,19 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.db.models import Q
 import json
+from django.db import transaction
+from django.utils import timezone
 
-# 把 utils.py 裡的所有工具都匯入
+
 from .utils import (
     extract_drugs_from_image, 
     search_drug_in_db, 
     query_openfda_interactions, 
-    batch_translate_fda_warnings
+    batch_translate_fda_warnings,
+    extract_int
 )
-
-# ⚠️ 等同學建好資料庫後，記得把下面這行解除註解，並確認表單名稱
-# from .models import Prescription, PrescriptionDrug, Warning, Drug
+from .models import Prescription, PrescriptionDrug, DrugWarning, Drug
+from accounts.models import User
 
 
 # ==========================================
@@ -52,39 +54,67 @@ def analyze_prescription_api(request):
 def confirm_and_save_prescription_api(request):
     if request.method == 'POST':
         try:
-            # 3. 收到前端確認好的資料 (解析 JSON)
-            body_unicode = request.body.decode('utf-8')
-            user_confirmed_data = json.loads(body_unicode)
-            
-            # 假設前端傳來的 JSON 裡面，藥品清單放在 'confirmed_drugs' 這個 key 裡
+            # 1. 收到前端確認好的資料 (拆包裹)
+            data_json_string = request.POST.get('data')
+            if not data_json_string:
+                return JsonResponse({'status': 'error', 'message': '未收到藥單資料'}, status=400)
+                
+            user_confirmed_data = json.loads(data_json_string)
+            image_file = request.FILES.get('prescription_img')
             drugs_list = user_confirmed_data.get('confirmed_drugs', [])
             
             final_report_data = []
             drugs_to_translate = []
 
-            # 跑迴圈處理每一顆藥
+            # ----------------------------------------------------
+            # 🌟 [優化版] 第一階段：準備資料與查詢 (加入快取機制)
+            # ----------------------------------------------------
             for drug in drugs_list:
                 search_kw = drug.get('search_keyword', '')
-                
-                # 3-1. 到資料庫查詢詳細資料
                 db_info = search_drug_in_db(search_kw)
                 
-                # 組合目前已知的所有資料
+                # 【優化重點 1】提早去資料庫抓這顆藥的實體
+                db_drug = Drug.objects.filter(
+                    Q(med_ch__icontains=search_kw) | Q(med_en__icontains=search_kw)
+                ).first()
+
+                existing_fda_results = []
+                need_fda_query = False
+
+                # 【優化重點 2】檢查這顆藥是不是已經被查過、翻譯過了？
+                if db_drug:
+                    warnings = DrugWarning.objects.filter(drug=db_drug)
+                    if warnings.exists():
+                        # 資料庫已經有警告紀錄！直接拿出來用，不用查 FDA 了
+                        print(f"⚡ 快取命中：直接從資料庫讀取 {search_kw} 的警告！省下 API 時間。")
+                        for w in warnings:
+                            existing_fda_results.append({
+                                "conflict_target": w.conflict_target,
+                                "warning_desc": w.warning_desc
+                            })
+                    else:
+                        # 資料庫有這顆藥，但還沒查過警告
+                        need_fda_query = True
+                else:
+                    # 資料庫連這顆藥都沒有，當然要查
+                    need_fda_query = True
+
+                # 組合資料
                 report_item = {
                     "raw_name": drug.get('raw_name', ''),
                     "search_keyword": search_kw,
                     "frequency": drug.get('frequency', ''),
                     "days": drug.get('days', ''),
                     "total_amount": drug.get('total_amount', ''),
-                    **db_info,  # 把 DB 查到的 7 大欄位直接併進來
-                    "fda_result": [] # 預留給 FDA 警告的空陣列
+                    **db_info,  
+                    "fda_result": existing_fda_results, # 先塞入已知的警告 (可能為空)
+                    "db_drug_obj": db_drug # 【優化重點 3】順便把藥品實體存起來，等一下存檔直接用
                 }
                 
-                # 4. 帶著藥物成分查詢 openFDA
-                if db_info["element"] != "無資料":
-                    status, fda_raw_text = query_openfda_interactions(db_info["element"])
+                # 【優化重點 4】只有當 need_fda_query 為 True 時，才去呼叫 openFDA
+                if need_fda_query and db_info.get("element", "無資料") != "無資料":
+                    status, fda_raw_text = query_openfda_interactions(db_info.get("element"))
                     if status == "HAS_CONFLICT":
-                        # 有衝突就先收集起來，等一下整批翻譯
                         drugs_to_translate.append({
                             "drug_name": report_item["raw_name"],
                             "english_text": fda_raw_text
@@ -92,57 +122,84 @@ def confirm_and_save_prescription_api(request):
                 
                 final_report_data.append(report_item)
 
-            # 5. 將這大筆資料拿去給 AI 翻譯整理成格式化資料
-            translations_dict = batch_translate_fda_warnings(drugs_to_translate)
-
-            # 把翻譯好的警告塞回每一顆藥的 fda_result 裡面
-            for data in final_report_data:
-                name = data["raw_name"]
-                if name in translations_dict:
-                    data["fda_result"] = translations_dict[name]
+            # 2. 將新發現的衝突拿去給 AI 翻譯 (如果全部都命中快取，這裡就不會執行，超省錢！)
+            if drugs_to_translate:
+                translations_dict = batch_translate_fda_warnings(drugs_to_translate)
+                # 把翻譯好的警告塞回對應的藥裡面
+                for data in final_report_data:
+                    name = data["raw_name"]
+                    if name in translations_dict:
+                        data["fda_result"] = translations_dict[name]
 
             # ----------------------------------------------------
-            # 6. 存入資料庫 (等 models.py 好了解除這段多行註解)
+            # 🌟 [優化版] 第二階段：存入資料庫
             # ----------------------------------------------------
-            """
-            # (A) 建立一張新的藥單主檔
-            # new_prescription = Prescription.objects.create(...)
+            from django.utils import timezone
+            
+            # [第一關] 確認使用者
+            user_id = user_confirmed_data.get('user_id')
+            try:
+                user_obj = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return JsonResponse({'status': 'error', 'message': f'找不到 ID 為 {user_id} 的使用者'}, status=404)
 
+            # [第二關] 存入藥單主檔
+            try:
+                h_name = user_confirmed_data.get('hospital_name', '未指定醫院')
+                v_date_str = user_confirmed_data.get('visit_date')
+                if v_date_str:
+                    from django.utils.dateparse import parse_date
+                    v_date = parse_date(v_date_str)
+                else:
+                    v_date = timezone.now()
+
+                new_prescription = Prescription.objects.create(
+                    user=user_obj,
+                    hospital_name=h_name,
+                    visit_date=v_date,
+                    image=image_file 
+                )
+            except Exception as e:
+                return JsonResponse({'status': 'error', 'message': f'💥 [建立藥單主檔失敗] {str(e)}'}, status=500)
+
+            # [第三關] 存入藥品明細與警告
             for data in final_report_data:
-                # 去資料庫抓這顆藥的實體物件 (拿它的 ID)
-                # db_drug = Drug.objects.filter(
-                #     Q(chinese_name__icontains=data['search_keyword']) | 
-                #     Q(english_name__icontains=data['search_keyword'])
-                # ).first()
-                
-                # if db_drug:
-                    # (B) 存入藥單藥品資料庫
-                    # PrescriptionDrug.objects.create(
-                    #     prescription_id=new_prescription,
-                    #     drug_id=db_drug,
-                    #     raw_name=data['raw_name'],
-                    #     total_amount=data['total_amount'],
-                    #     frequency=data['frequency'],
-                    #     days=data['days']
-                    # )
+                # 【優化重點 5】直接把剛才找好的 db_drug_obj 拿出來用，並從字典裡移除 (以免轉 JSON 時報錯)
+                db_drug = data.pop('db_drug_obj', None)
+
+                if db_drug:
+                    try:
+                        PrescriptionDrug.objects.create(
+                            prescription=new_prescription,
+                            drug=db_drug,
+                            raw_name=data.get('raw_name', ''),
+                            total_amount=extract_int(data.get('total_amount')),
+                            frequency=data.get('frequency', ''),
+                            days=extract_int(data.get('days'))
+                        )
+                    except Exception as e:
+                        return JsonResponse({'status': 'error', 'message': f'💥 [存入藥品明細失敗] {str(e)}'}, status=500)
                     
-                    # (C) 存入藥物警告表
-                    # for w in data["fda_result"]:
-                    #     Warning.objects.create(
-                    #         drug_id=db_drug,
-                    #         conflict_target=w['conflict_target'],
-                    #         warning_desc=w['warning_desc']
-                    #     )
-            """
+                    # 存入警告 (使用 get_or_create 確保絕對不會重複)
+                    for w in data.get("fda_result", []):
+                        try:
+                            DrugWarning.objects.get_or_create(
+                                drug=db_drug,
+                                conflict_target=w['conflict_target'],
+                                defaults={'warning_desc': w['warning_desc']}
+                            )
+                        except Exception as e:
+                            return JsonResponse({'status': 'error', 'message': f'💥 [存入警告失敗] {str(e)}'}, status=500)
 
-            # 6. 將所有資料傳回前端
+            # 3. 將所有資料傳回前端
             return JsonResponse({
                 'status': 'success',
+                'message': f'藥單與圖片已成功存檔！',
                 'data': final_report_data
             }, status=200)
 
         except json.JSONDecodeError:
-            return JsonResponse({'status': 'error', 'message': 'JSON 格式錯誤'}, status=400)
+            return JsonResponse({'status': 'error', 'message': 'JSON 格式錯誤，請確認前端資料是否放在 data 欄位'}, status=400)
         except Exception as e:
             return JsonResponse({'status': 'error', 'message': f"系統錯誤: {str(e)}"}, status=500)
 
