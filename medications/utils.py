@@ -6,7 +6,7 @@ from PIL import Image
 from dotenv import load_dotenv
 import re
 from django.db.models import Q
-# from .models import Drug
+from .models import Drug
 
 # 載入 .env 裡的環境變數
 load_dotenv()
@@ -54,7 +54,7 @@ def search_drug_in_db(search_kw):
 
     result = {
         "license": "無資料",
-        "chinese_name": "查無官方名稱",
+        "med_ch": "查無官方名稱",
         "element": "無資料",
         "indications": "無資料",
         "dosage_form": "未知劑型",         
@@ -69,14 +69,14 @@ def search_drug_in_db(search_kw):
     # 執行模糊搜尋：使用 Q 物件同時搜尋中文或英文欄位
     # ⚠️ 這裡的 chinese_name 與 english_name 記得對齊同學的新欄位命名
     match_drug = Drug.objects.filter(
-        Q(chinese_name__icontains=search_kw) | 
-        Q(english_name__icontains=search_kw)
+        Q(med_ch__icontains=search_kw) | 
+        Q(med_en__icontains=search_kw)
     ).first()
     
     if match_drug:
         
         result["license"] = getattr(match_drug, 'license', '無資料')
-        result["chinese_name"] = getattr(match_drug, 'chinese_name', '查無官方名稱')
+        result["med_ch"] = getattr(match_drug, 'med_ch', '查無官方名稱')
         result["indications"] = getattr(match_drug, 'indications', '無資料')
         result["dosage_form"] = getattr(match_drug, 'dosage_form', '未知劑型')
         
@@ -178,3 +178,16 @@ def batch_translate_fda_warnings(drugs_to_translate):
     except Exception as e:
         print(f"❌ 批次翻譯與格式化失敗：{e}")
         return {}
+    
+
+
+#將字串中的數字提取出來並轉為整數，例如 "9顆" -> 9, "3天" -> 3
+def extract_int(text):
+    
+    if isinstance(text, int): 
+        return text
+    # 這裡多加一個判斷，防止 None 報錯
+    if not text:
+        return 0
+    nums = re.findall(r'\d+', str(text))
+    return int(nums[0]) if nums else 0

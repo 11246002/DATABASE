@@ -1,11 +1,12 @@
 import pandas as pd
 import os
 import django
+import sys
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'med_project.settings')
-django.setup()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(BASE_DIR)
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'med_project.settings')
+django.setup()
 
 from medications.models import Drug
 

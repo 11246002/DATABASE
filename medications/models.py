@@ -1,5 +1,5 @@
 from django.db import models
-from django.contrib.auth.models import User
+from accounts.models import User
 
 
 class Drug(models.Model):
@@ -32,7 +32,7 @@ class Prescription(models.Model):
 )
 
     def __str__(self):
-        return f"{self.user.username} - {self.hospital_name}"
+        return f"{self.user.id} - {self.hospital_name}"
 
 
 class DrugWarning(models.Model):
@@ -59,7 +59,9 @@ class PrescriptionDrug(models.Model):
 
     drug = models.ForeignKey(
         Drug,
-        on_delete=models.CASCADE
+        on_delete=models.SET_NULL, 
+        null=True,
+        blank=True
     )
 
     prescription = models.ForeignKey(
