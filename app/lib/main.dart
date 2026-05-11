@@ -2,16 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb; // 🌟 引入判斷是否為網頁版的工具
 
 // 準備一個全域變數來裝手機的鏡頭清單
 late List<CameraDescription> cameras;
 
 Future<void> main() async {
-  // 確保 Flutter 核心已經準備好
   WidgetsFlutterBinding.ensureInitialized();
   
   try {
-    // 取得手機上所有可用的相機 (前鏡頭、後鏡頭)
     cameras = await availableCameras();
   } on CameraException catch (e) {
     debugPrint('相機錯誤: ${e.code}, ${e.description}');
@@ -19,7 +20,7 @@ Future<void> main() async {
 
   runApp(const MaterialApp(
     debugShowCheckedModeBanner: false,
-    home: WelcomePage(), // 你的第一頁
+    home: WelcomePage(), 
   ));
 }
 
@@ -248,7 +249,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 }
 
-// --- 5. 主功能頁面 (包含底部導覽列) ---
+// --- 5. 主功能頁面 ---
 class MainAppPage extends StatefulWidget {
   const MainAppPage({super.key});
 
@@ -257,12 +258,12 @@ class MainAppPage extends StatefulWidget {
 }
 
 class _MainAppPageState extends State<MainAppPage> {
-  int _selectedIndex = 2; // 預設一進來先跳到中間第 3 格的「藥單加入」(索引值為 2)
+  int _selectedIndex = 2; 
 
   static const List<Widget> _pages = <Widget>[
     Center(child: Text('提醒設定頁面', style: TextStyle(fontSize: 24))),
     Center(child: Text('我的藥袋頁面', style: TextStyle(fontSize: 24))),
-    AddPrescriptionPage(), // 獨立出來的「藥單加入」相機頁面
+    AddPrescriptionPage(), 
     Center(child: Text('設定頁面', style: TextStyle(fontSize: 24))),
     Center(child: Text('個人資料頁面', style: TextStyle(fontSize: 24))),
   ];
@@ -300,7 +301,7 @@ class _MainAppPageState extends State<MainAppPage> {
   }
 }
 
-// --- 獨立的「藥單加入」相機頁面積木 (StatefulWidget) ---
+// --- 獨立的「藥單加入」相機頁面積木 ---
 class AddPrescriptionPage extends StatefulWidget {
   const AddPrescriptionPage({super.key});
 
@@ -334,11 +335,24 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
     super.dispose();
   }
 
+  // --- 🌟 完美支援 Web 與手機版的流程控制 ---
+  Future<void> _processImage(XFile image) async {
+    if (kIsWeb) {
+      // 如果是 Chrome 網頁版：直接跳過裁切，上傳給伺服器
+      debugPrint('目前為網頁版，跳過裁切，直接上傳...');
+      _uploadAndAnalyze(image); 
+    } else {
+      // 如果是真實的手機 App：呼叫裁切畫面
+      debugPrint('目前為手機版，進入裁切畫面...');
+      _cropImage(image.path);
+    }
+  }
+
   // 從相簿選擇圖片
   Future<void> _pickImageFromGallery() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
     if (image != null) {
-      _cropImage(image.path);
+      _processImage(image);
     }
   }
 
@@ -349,19 +363,17 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
 
     try {
       XFile file = await _controller!.takePicture();
-      _cropImage(file.path);
+      _processImage(file);
     } catch (e) {
       debugPrint('拍照失敗: $e');
     }
   }
 
-  // 裁切圖片
-// 裁切圖片
+  // --- 裁切圖片 (只有手機版會執行到這裡) ---
   Future<void> _cropImage(String filePath) async {
     try {
       CroppedFile? croppedFile = await ImageCropper().cropImage(
         sourcePath: filePath,
-        // 最新版要把比例設定放進 uiSettings 裡面
         uiSettings: [
           AndroidUiSettings(
             toolbarTitle: '裁切藥單', 
@@ -369,69 +381,102 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
             toolbarWidgetColor: Colors.white, 
             initAspectRatio: CropAspectRatioPreset.original,
             lockAspectRatio: false,
-            // 🌟 Android 的比例設定放這裡 🌟
-            aspectRatioPresets: [
-              CropAspectRatioPreset.original,
-              CropAspectRatioPreset.square,
-              CropAspectRatioPreset.ratio4x3,
-            ],
+            aspectRatioPresets: [CropAspectRatioPreset.original, CropAspectRatioPreset.square, CropAspectRatioPreset.ratio4x3],
           ), 
           IOSUiSettings(
             title: '裁切藥單',
-            // 🌟 iOS 的比例設定放這裡 🌟
-            aspectRatioPresets: [
-              CropAspectRatioPreset.original,
-              CropAspectRatioPreset.square,
-              CropAspectRatioPreset.ratio4x3,
-            ],
+            aspectRatioPresets: [CropAspectRatioPreset.original, CropAspectRatioPreset.square, CropAspectRatioPreset.ratio4x3],
           ),
         ],
       );
 
       if (croppedFile != null) {
         debugPrint('圖片裁切完成！檔案路徑: ${croppedFile.path}');
-        _showIdentifyingDialog();
+        // 手機版裁切完後，把 CroppedFile 轉成 XFile 丟給上傳 API
+        _uploadAndAnalyze(XFile(croppedFile.path));
       }
     } catch (e) {
       debugPrint('裁切圖片失敗: $e');
     }
   }
 
-  // 顯示正在辨識中畫面
-// --- 更新版：顯示正在辨識中畫面 (加入自動模擬等待) ---
-  void _showIdentifyingDialog() {
+  // --- 🌟 完美支援 Web 與手機的上傳 API ---
+  Future<void> _uploadAndAnalyze(XFile imageFile) async { 
+    _showLoadingDialog();
+
+    var apiUrl = Uri.parse('http://127.0.0.1:8000/medications/api/scan/');
+
+    try {
+      var request = http.MultipartRequest('POST', apiUrl);
+      
+      // 根據平台選擇打包圖片的方式
+      if (kIsWeb) {
+        // 網頁版必須用 Bytes 傳送
+        var bytes = await imageFile.readAsBytes(); 
+        var pic = http.MultipartFile.fromBytes(
+          'prescription_img', 
+          bytes, 
+          filename: imageFile.name, 
+        );
+        request.files.add(pic);
+      } else {
+        // 手機版可以直接用檔案路徑傳送
+        var pic = await http.MultipartFile.fromPath('prescription_img', imageFile.path);
+        request.files.add(pic);
+      }
+
+      var response = await request.send();
+      var responseData = await response.stream.bytesToString();
+      
+      if (!mounted) return;
+      Navigator.pop(context); 
+
+      if (response.statusCode == 200) {
+        var jsonResult = json.decode(responseData);
+        if (jsonResult['status'] == 'success') {
+          _showResultDialog(jsonResult['data']);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('辨識失敗: ${jsonResult['message']}'), backgroundColor: Colors.red));
+        }
+      } else {
+        debugPrint('伺服器錯誤: $responseData');
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('伺服器錯誤，請稍後再試！'), backgroundColor: Colors.red));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); 
+      debugPrint('網路連線錯誤: $e');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線到伺服器失敗: $e'), backgroundColor: Colors.red));
+    }
+  }
+
+  // --- 顯示轉圈圈的 Dialog ---
+  void _showLoadingDialog() {
     showDialog(
       context: context,
-      barrierDismissible: false, // 強制使用者等待
+      barrierDismissible: false,
       builder: (BuildContext context) {
-        return AlertDialog(
+        return const AlertDialog(
           content: Column(
             mainAxisSize: MainAxisSize.min,
-            children: const [
+            children: [
               CircularProgressIndicator(color: Colors.teal),
               SizedBox(height: 20),
               Text("正在進行 AI 辨識...", style: TextStyle(fontSize: 16)),
               SizedBox(height: 10),
-              Text("請稍候，正在向伺服器分析影像", style: TextStyle(color: Colors.grey, fontSize: 12)),
+              Text("正在與伺服器連線中", style: TextStyle(color: Colors.grey, fontSize: 12)),
             ],
           ),
         );
       },
     );
-
-    // 🌟 這裡模擬連線到 AI 伺服器的延遲時間 (設定為 2.5 秒)
-    Future.delayed(const Duration(milliseconds: 2500), () {
-      if (!mounted) return;
-      Navigator.pop(context); // 1. 時間到，自動關閉轉圈圈視窗
-      _showResultDialog();    // 2. 緊接著彈出辨識結果視窗！
-    });
   }
 
-  // --- 新增：辨識結果確認視窗 ---
-  void _showResultDialog() {
+  // --- 辨識結果確認視窗 ---
+  void _showResultDialog(List<dynamic> drugsData) {
     showDialog(
       context: context,
-      barrierDismissible: false, // 必須按下正確或錯誤才能關閉
+      barrierDismissible: false, 
       builder: (BuildContext context) {
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -442,67 +487,63 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
               Text('辨識結果確認', style: TextStyle(fontWeight: FontWeight.bold)),
             ],
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('系統在您的藥單上找到以下藥品：', style: TextStyle(fontSize: 15)),
-              const SizedBox(height: 15),
-              
-              // 模擬列出辨識出來的藥品 (這裡以後可以換成組員回傳的真實資料)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.teal.withOpacity(0.1), // 淺綠色底色
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.teal.shade200),
+          content: SingleChildScrollView( 
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('系統在您的藥單上找到以下藥品：', style: TextStyle(fontSize: 15)),
+                const SizedBox(height: 15),
+                
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.teal.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: drugsData.isEmpty 
+                      ? [const Text('未能辨識出任何藥品', style: TextStyle(color: Colors.red))]
+                      : drugsData.map((drug) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8.0),
+                            child: Text(
+                              '• ${drug['raw_name']} (${drug['frequency']}, ${drug['total_amount']})', 
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)
+                            ),
+                          );
+                        }).toList(),
+                  ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text('1. 普拿疼 (Panadol) 500mg', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    SizedBox(height: 8),
-                    Text('2. 阿莫西林 (Amoxicillin) 250mg', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    SizedBox(height: 8),
-                    Text('3. 胃酸中和劑 (Antacid)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 15),
-              const Text('請問以上結果是否正確？', style: TextStyle(color: Colors.redAccent, fontSize: 14, fontWeight: FontWeight.bold)),
-            ],
+                const SizedBox(height: 15),
+                const Text('請問以上結果是否正確？', style: TextStyle(color: Colors.redAccent, fontSize: 14, fontWeight: FontWeight.bold)),
+              ],
+            ),
           ),
           
-          // 下半部的兩個按鈕 (正確 vs 錯誤)
-          actionsAlignment: MainAxisAlignment.spaceEvenly, // 讓按鈕平均分配空間
+          actionsAlignment: MainAxisAlignment.spaceEvenly, 
           actions: [
-            // 錯誤按鈕
             ElevatedButton.icon(
               onPressed: () {
-                Navigator.pop(context); // 關閉視窗
-                // TODO: 之後可以在這裡加入「手動修改藥品」或「重新拍攝」的邏輯
-                debugPrint("使用者點擊：錯誤！(可能需要手動修正)");
+                Navigator.pop(context); 
               },
               icon: const Icon(Icons.close),
               label: const Text('錯誤'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.white,
                 foregroundColor: Colors.redAccent,
-                side: const BorderSide(color: Colors.redAccent), // 紅色邊框
+                side: const BorderSide(color: Colors.redAccent),
               ),
             ),
             
-            // 正確按鈕
             ElevatedButton.icon(
               onPressed: () {
-                Navigator.pop(context); // 關閉視窗
-                // TODO: 之後可以在這裡把資料存進資料庫，並跳轉到「我的藥袋」頁面
-                debugPrint("使用者點擊：正確！(準備將藥單加入個人紀錄)");
-                
-                // 可以加一個成功的小提示
+                Navigator.pop(context); 
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('✅ 藥單已成功加入！'), backgroundColor: Colors.teal),
+                  const SnackBar(content: Text('✅ 準備進行資料庫存檔...'), backgroundColor: Colors.teal),
                 );
               },
               icon: const Icon(Icons.check),
@@ -517,6 +558,7 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
       },
     );
   }
+
   @override
   Widget build(BuildContext context) {
     return Center(
@@ -529,10 +571,8 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
           ),
           const SizedBox(height: 20),
           
-          // Stack 疊層積木：相機畫面 + 相簿按鈕
           Stack(
             children: [
-              // 第 1 層：相機預覽框
               Container(
                 width: 300,
                 height: 400,
@@ -549,7 +589,6 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
                 ),
               ),
               
-              // 第 2 層：相簿按鈕
               Positioned(
                 bottom: 15, 
                 left: 15,   
@@ -574,7 +613,6 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
           
           const SizedBox(height: 30),
           
-          // 開始掃描按鈕
           SizedBox(
             width: 200,
             height: 55,

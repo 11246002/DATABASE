@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\88692\drug_app\app\build\windows\x64\CMakeFiles\c2e7641b3dfa44a36b3b7be3d7e2120e\INSTALL_force.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{46B14B21-EA78-30F9-BBF6-FD718C66B2DD}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
