@@ -132,7 +132,7 @@ class _ProfilePageState extends State<ProfilePage> {
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Icon(Icons.check_circle, color: Colors.green, size: 60),
-        content: const Text('註冊手續已全部完成！\n現在將引導您前往登入頁面。', textAlign: TextAlign.center),
+        content: const Text('註冊已全部完成！\n現在將引導您前往登入頁面。', textAlign: TextAlign.center),
         actions: [
           Center(
             child: TextButton(
