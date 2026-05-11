@@ -543,7 +543,7 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
               onPressed: () {
                 Navigator.pop(context); 
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('✅ 準備進行資料庫存檔...'), backgroundColor: Colors.teal),
+                  const SnackBar(content: Text('✅ 準備進行資料庫存檔'), backgroundColor: Colors.teal),
                 );
               },
               icon: const Icon(Icons.check),
