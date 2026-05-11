@@ -343,7 +343,7 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
       _uploadAndAnalyze(image); 
     } else {
       // 如果是真實的手機 App：呼叫裁切畫面
-      debugPrint('目前為手機版，進入裁切畫面...');
+      debugPrint('目前為手機版，進入裁切畫面');
       _cropImage(image.path);
     }
   }
