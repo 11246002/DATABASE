@@ -97,128 +97,125 @@ class LoginPage extends StatelessWidget {
   }
 }
 
-// --- 頁面 3: 註冊頁面 ---
-class RegisterPage extends StatelessWidget {
+// --- 🌟 頁面 3: 最新註冊頁面 (包含健康資料填寫) ---
+class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
+  @override
+  State<RegisterPage> createState() => _RegisterPageState();
+}
+
+class _RegisterPageState extends State<RegisterPage> {
+  String selectedGender = '男';
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('註冊新帳號')),
+      appBar: AppBar(title: const Text('建立帳號')),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(30.0),
+        padding: const EdgeInsets.all(25.0),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-<<<<<<< HEAD
-            const TextField(decoration: InputDecoration(labelText: '真實姓名')),
-=======
-            const TextField(decoration: InputDecoration(labelText: '名字', border: OutlineInputBorder())),
+            _buildSectionTitle('帳號設定'),
+            const TextField(decoration: InputDecoration(labelText: '真實姓名', prefixIcon: Icon(Icons.badge_outlined))),
             const SizedBox(height: 15),
-            const TextField(decoration: InputDecoration(labelText: '帳號', border: OutlineInputBorder())),
+            const TextField(decoration: InputDecoration(labelText: '暱稱 (顯示於首頁)', prefixIcon: Icon(Icons.face))),
             const SizedBox(height: 15),
-            const TextField(obscureText: true, decoration: InputDecoration(labelText: '密碼', border: OutlineInputBorder())),
+            const TextField(decoration: InputDecoration(labelText: '帳號 ID (Email)', prefixIcon: Icon(Icons.email_outlined))),
             const SizedBox(height: 15),
-            const TextField(obscureText: true, decoration: InputDecoration(labelText: '再次輸入密碼', border: OutlineInputBorder())),
+            const TextField(obscureText: true, decoration: InputDecoration(labelText: '密碼設定', prefixIcon: Icon(Icons.lock_outline))),
+            
             const SizedBox(height: 30),
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfilePage())),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white),
-                child: const Text('完成註冊'),
+            _buildSectionTitle('核心健康資訊 (必填)'),
+            const Text('性別', style: TextStyle(fontSize: 16, color: Colors.grey)),
+            Row(
+              children: [
+                Radio(value: '男', groupValue: selectedGender, onChanged: (val) => setState(() => selectedGender = val!)),
+                const Text('男'),
+                const SizedBox(width: 20),
+                Radio(value: '女', groupValue: selectedGender, onChanged: (val) => setState(() => selectedGender = val!)),
+                const Text('女'),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(child: TextField(keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '身高 (cm)', prefixIcon: Icon(Icons.height)))),
+                const SizedBox(width: 15),
+                Expanded(child: TextField(keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '體重 (kg)', prefixIcon: Icon(Icons.monitor_weight_outlined)))),
+              ],
+            ),
+            const SizedBox(height: 15),
+            const TextField(
+              maxLines: 2,
+              decoration: InputDecoration(
+                labelText: '藥物過敏史', 
+                hintText: '若無請填「無」',
+                prefixIcon: Icon(Icons.warning_amber_rounded),
+                border: OutlineInputBorder(),
               ),
             ),
+
+            const SizedBox(height: 30),
+            _buildSectionTitle('安全聯繫'),
+            const TextField(
+              keyboardType: TextInputType.phone,
+              decoration: InputDecoration(labelText: '緊急聯絡人電話', prefixIcon: Icon(Icons.contact_phone_outlined)),
+            ),
+
+            const SizedBox(height: 40),
+            SizedBox(
+              width: double.infinity,
+              height: 55,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                ),
+                onPressed: _showSuccessDialog,
+                child: const Text('完成並送出', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 20),
           ],
         ),
       ),
     );
   }
-}
 
-// --- 4. 個人資料頁面 ---
-class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
-  @override
-  State<ProfilePage> createState() => _ProfilePageState();
-}
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 15),
+      child: Row(
+        children: [
+          Container(width: 5, height: 20, color: Colors.teal),
+          const SizedBox(width: 10),
+          Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.teal)),
+        ],
+      ),
+    );
+  }
 
-class _ProfilePageState extends State<ProfilePage> {
-  String selectedGender = '男';
-  final TextEditingController groupCodeController = TextEditingController();
-
-  void showFinalSuccessDialog() {
+  void _showSuccessDialog() {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Icon(Icons.check_circle, color: Colors.green, size: 60),
-        content: const Text('註冊已全部完成！\n現在將引導您前往登入頁面。', textAlign: TextAlign.center),
+        content: const Text('帳號已成功建立！\n您的健康資料已同步至個人檔案。', textAlign: TextAlign.center),
         actions: [
           Center(
             child: TextButton(
               onPressed: () {
+                Navigator.pop(context);
                 Navigator.pop(context); 
-                Navigator.pushAndRemoveUntil(
-                  context, 
-                  MaterialPageRoute(builder: (context) => const LoginPage()),
-                  (route) => false
-                );
               },
-              child: const Text('好，去登入'),
+              child: const Text('好的，去登入', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  void showGroupCodeDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('加入群組'),
-        content: TextField(
-          controller: groupCodeController,
-          decoration: const InputDecoration(
-            hintText: "請輸入群組代碼",
-            border: UnderlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context); 
-              showFinalSuccessDialog(); 
-            },
-            child: const Text('確定'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('填寫個人資料')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('基本資料', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.teal)),
->>>>>>> 8b2d049c2c1a2be420fa6b3e248f0955c0ac2134
-            const SizedBox(height: 20),
-            const TextField(decoration: InputDecoration(labelText: '帳號設定')),
-            const SizedBox(height: 20),
-            const TextField(obscureText: true, decoration: InputDecoration(labelText: '密碼')),
-            const SizedBox(height: 20),
-            const TextField(decoration: InputDecoration(labelText: '緊急聯絡人電話')),
-            const SizedBox(height: 40),
-            SizedBox(width: double.infinity, height: 55, child: ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text('提交註冊'))),
-          ],
-        ),
       ),
     );
   }
@@ -320,7 +317,7 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
   }
 }
 
-// --- 【我的藥袋】藥品清單 (左上角加入、右滑刪除) ---
+// --- 【我的藥袋】藥品清單 ---
 class MedicationListPage extends StatefulWidget {
   final Map<String, dynamic> clinic;
   const MedicationListPage({super.key, required this.clinic});
@@ -659,6 +656,8 @@ class AddPrescriptionPage extends StatefulWidget {
 
 class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
   CameraController? _controller;
+  final ImagePicker _picker = ImagePicker(); 
+
   @override
   void initState() {
     super.initState();
@@ -667,29 +666,23 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
       _controller!.initialize().then((_) { if (mounted) setState(() {}); });
     }
   }
+
   @override
-<<<<<<< HEAD
-  void dispose() { _controller?.dispose(); super.dispose(); }
-=======
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
+  void dispose() { 
+    _controller?.dispose(); 
+    super.dispose(); 
   }
 
-  // --- 🌟 完美支援 Web 與手機版的流程控制 ---
   Future<void> _processImage(XFile image) async {
     if (kIsWeb) {
-      // 如果是 Chrome 網頁版：直接跳過裁切，上傳給伺服器
       debugPrint('目前為網頁版，跳過裁切，直接上傳...');
       _uploadAndAnalyze(image); 
     } else {
-      // 如果是真實的手機 App：呼叫裁切畫面
       debugPrint('目前為手機版，進入裁切畫面');
       _cropImage(image.path);
     }
   }
 
-  // 從相簿選擇圖片
   Future<void> _pickImageFromGallery() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
     if (image != null) {
@@ -697,7 +690,6 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
     }
   }
 
-  // 拍照
   Future<void> _takePicture() async {
     if (_controller == null || !_controller!.value.isInitialized) return;
     if (_controller!.value.isTakingPicture) return;
@@ -710,7 +702,6 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
     }
   }
 
-  // --- 裁切圖片 (只有手機版會執行到這裡) ---
   Future<void> _cropImage(String filePath) async {
     try {
       CroppedFile? croppedFile = await ImageCropper().cropImage(
@@ -733,7 +724,6 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
 
       if (croppedFile != null) {
         debugPrint('圖片裁切完成！檔案路徑: ${croppedFile.path}');
-        // 手機版裁切完後，把 CroppedFile 轉成 XFile 丟給上傳 API
         _uploadAndAnalyze(XFile(croppedFile.path));
       }
     } catch (e) {
@@ -741,18 +731,14 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
     }
   }
 
-  // --- 🌟 完美支援 Web 與手機的上傳 API ---
   Future<void> _uploadAndAnalyze(XFile imageFile) async { 
     _showLoadingDialog();
-
     var apiUrl = Uri.parse('http://127.0.0.1:8000/medications/api/scan/');
 
     try {
       var request = http.MultipartRequest('POST', apiUrl);
       
-      // 根據平台選擇打包圖片的方式
       if (kIsWeb) {
-        // 網頁版必須用 Bytes 傳送
         var bytes = await imageFile.readAsBytes(); 
         var pic = http.MultipartFile.fromBytes(
           'prescription_img', 
@@ -761,7 +747,6 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
         );
         request.files.add(pic);
       } else {
-        // 手機版可以直接用檔案路徑傳送
         var pic = await http.MultipartFile.fromPath('prescription_img', imageFile.path);
         request.files.add(pic);
       }
@@ -791,7 +776,6 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
     }
   }
 
-  // --- 顯示轉圈圈的 Dialog ---
   void _showLoadingDialog() {
     showDialog(
       context: context,
@@ -813,7 +797,6 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
     );
   }
 
-  // --- 辨識結果確認視窗 ---
   void _showResultDialog(List<dynamic> drugsData) {
     showDialog(
       context: context,
@@ -864,35 +847,22 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
               ],
             ),
           ),
-          
           actionsAlignment: MainAxisAlignment.spaceEvenly, 
           actions: [
             ElevatedButton.icon(
-              onPressed: () {
-                Navigator.pop(context); 
-              },
+              onPressed: () => Navigator.pop(context),
               icon: const Icon(Icons.close),
               label: const Text('錯誤'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.redAccent,
-                side: const BorderSide(color: Colors.redAccent),
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.redAccent, side: const BorderSide(color: Colors.redAccent)),
             ),
-            
             ElevatedButton.icon(
               onPressed: () {
                 Navigator.pop(context); 
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('✅ 準備進行資料庫存檔'), backgroundColor: Colors.teal),
-                );
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ 準備進行資料庫存檔'), backgroundColor: Colors.teal));
               },
               icon: const Icon(Icons.check),
               label: const Text('正確'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.teal,
-                foregroundColor: Colors.white,
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white),
             ),
           ],
         );
@@ -900,7 +870,6 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
     );
   }
 
->>>>>>> 8b2d049c2c1a2be420fa6b3e248f0955c0ac2134
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -909,18 +878,33 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
         const Text('請將藥單對準框內', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.teal)),
         const SizedBox(height: 20),
         Center(
-          child: Container(
-            width: 300, height: 400,
-            decoration: BoxDecoration(border: Border.all(color: Colors.teal, width: 3), borderRadius: BorderRadius.circular(20)),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(17),
-              child: (_controller != null && _controller!.value.isInitialized) ? CameraPreview(_controller!) : const Center(child: CircularProgressIndicator()),
-            ),
+          child: Stack(
+            children: [
+              Container(
+                width: 300, height: 400,
+                decoration: BoxDecoration(border: Border.all(color: Colors.teal, width: 3), borderRadius: BorderRadius.circular(20)),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(17),
+                  child: (_controller != null && _controller!.value.isInitialized) ? CameraPreview(_controller!) : const Center(child: CircularProgressIndicator()),
+                ),
+              ),
+              Positioned(
+                bottom: 15, left: 15,
+                child: Container(
+                  decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))]),
+                  child: IconButton(
+                    icon: const Icon(Icons.photo_library),
+                    color: Colors.teal, iconSize: 28,
+                    onPressed: _pickImageFromGallery,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 30),
         ElevatedButton.icon(
-          onPressed: () {},
+          onPressed: _takePicture,
           icon: const Icon(Icons.camera_alt),
           label: const Text('開始掃描', style: TextStyle(fontSize: 18)),
           style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15)),
