@@ -1,37 +1,13 @@
-# Miscellaneous
-*.class
-*.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
-migrate_working_dir/
-
-# IntelliJ related
-*.iml
-*.ipr
-*.iws
-.idea/
-
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
-
-# Flutter/Dart/Pub related
+# === 前端 Flutter/Dart 忽略清單 (已修正路徑) ===
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
-/build/
-/coverage/
+# 拿掉最前面的斜線，這樣不管 build 在哪層都會被擋掉
+build/
+coverage/
 
 # Symbolication related
 app.*.symbols
@@ -40,13 +16,15 @@ app.*.symbols
 app.*.map.json
 
 # Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
+# 加上 **/ 讓它懂得找 app 資料夾裡面的 android
+**/android/app/debug
+**/android/app/profile
+**/android/app/release
 
+# === 後端 Django 忽略清單 ===
 venv/
 .env
-db.sqlite3
 __pycache__/
 *.pyc
 prescriptions/
+db.sqlite3

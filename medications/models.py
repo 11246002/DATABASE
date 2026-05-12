@@ -73,5 +73,44 @@ class PrescriptionDrug(models.Model):
 
     days = models.IntegerField()
 
+    remaining_amount = models.IntegerField(
+        null=True,
+        blank=True
+    )
+
     def __str__(self):
         return f"{self.raw_name} ({self.frequency})"
+    
+
+class Remind(models.Model):
+
+    remind_id = models.AutoField(primary_key=True)
+
+    prescription_drug = models.ForeignKey(
+        PrescriptionDrug,
+        on_delete=models.CASCADE
+    )
+
+    frequency_tag = models.CharField(max_length=50)
+
+    remind_time = models.TimeField()
+
+    def __str__(self):
+        return f"{self.prescription_drug.raw_name} - {self.remind_time}"
+    
+
+class TakingRecord(models.Model):
+
+    takingrecord_id = models.AutoField(primary_key=True)
+
+    remind = models.ForeignKey(
+        Remind,
+        on_delete=models.CASCADE
+    )
+
+    status = models.CharField(max_length=20)
+
+    taken_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"{self.remind} - {self.status}"

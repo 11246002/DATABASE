@@ -108,7 +108,107 @@ class RegisterPage extends StatelessWidget {
         padding: const EdgeInsets.all(30.0),
         child: Column(
           children: [
+<<<<<<< HEAD
             const TextField(decoration: InputDecoration(labelText: '真實姓名')),
+=======
+            const TextField(decoration: InputDecoration(labelText: '名字', border: OutlineInputBorder())),
+            const SizedBox(height: 15),
+            const TextField(decoration: InputDecoration(labelText: '帳號', border: OutlineInputBorder())),
+            const SizedBox(height: 15),
+            const TextField(obscureText: true, decoration: InputDecoration(labelText: '密碼', border: OutlineInputBorder())),
+            const SizedBox(height: 15),
+            const TextField(obscureText: true, decoration: InputDecoration(labelText: '再次輸入密碼', border: OutlineInputBorder())),
+            const SizedBox(height: 30),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfilePage())),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white),
+                child: const Text('完成註冊'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- 4. 個人資料頁面 ---
+class ProfilePage extends StatefulWidget {
+  const ProfilePage({super.key});
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  String selectedGender = '男';
+  final TextEditingController groupCodeController = TextEditingController();
+
+  void showFinalSuccessDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Icon(Icons.check_circle, color: Colors.green, size: 60),
+        content: const Text('註冊已全部完成！\n現在將引導您前往登入頁面。', textAlign: TextAlign.center),
+        actions: [
+          Center(
+            child: TextButton(
+              onPressed: () {
+                Navigator.pop(context); 
+                Navigator.pushAndRemoveUntil(
+                  context, 
+                  MaterialPageRoute(builder: (context) => const LoginPage()),
+                  (route) => false
+                );
+              },
+              child: const Text('好，去登入'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void showGroupCodeDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('加入群組'),
+        content: TextField(
+          controller: groupCodeController,
+          decoration: const InputDecoration(
+            hintText: "請輸入群組代碼",
+            border: UnderlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); 
+              showFinalSuccessDialog(); 
+            },
+            child: const Text('確定'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('填寫個人資料')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('基本資料', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.teal)),
+>>>>>>> 8b2d049c2c1a2be420fa6b3e248f0955c0ac2134
             const SizedBox(height: 20),
             const TextField(decoration: InputDecoration(labelText: '帳號設定')),
             const SizedBox(height: 20),
@@ -568,7 +668,239 @@ class _AddPrescriptionPageState extends State<AddPrescriptionPage> {
     }
   }
   @override
+<<<<<<< HEAD
   void dispose() { _controller?.dispose(); super.dispose(); }
+=======
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  // --- 🌟 完美支援 Web 與手機版的流程控制 ---
+  Future<void> _processImage(XFile image) async {
+    if (kIsWeb) {
+      // 如果是 Chrome 網頁版：直接跳過裁切，上傳給伺服器
+      debugPrint('目前為網頁版，跳過裁切，直接上傳...');
+      _uploadAndAnalyze(image); 
+    } else {
+      // 如果是真實的手機 App：呼叫裁切畫面
+      debugPrint('目前為手機版，進入裁切畫面');
+      _cropImage(image.path);
+    }
+  }
+
+  // 從相簿選擇圖片
+  Future<void> _pickImageFromGallery() async {
+    final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
+    if (image != null) {
+      _processImage(image);
+    }
+  }
+
+  // 拍照
+  Future<void> _takePicture() async {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    if (_controller!.value.isTakingPicture) return;
+
+    try {
+      XFile file = await _controller!.takePicture();
+      _processImage(file);
+    } catch (e) {
+      debugPrint('拍照失敗: $e');
+    }
+  }
+
+  // --- 裁切圖片 (只有手機版會執行到這裡) ---
+  Future<void> _cropImage(String filePath) async {
+    try {
+      CroppedFile? croppedFile = await ImageCropper().cropImage(
+        sourcePath: filePath,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: '裁切藥單', 
+            toolbarColor: Colors.teal, 
+            toolbarWidgetColor: Colors.white, 
+            initAspectRatio: CropAspectRatioPreset.original,
+            lockAspectRatio: false,
+            aspectRatioPresets: [CropAspectRatioPreset.original, CropAspectRatioPreset.square, CropAspectRatioPreset.ratio4x3],
+          ), 
+          IOSUiSettings(
+            title: '裁切藥單',
+            aspectRatioPresets: [CropAspectRatioPreset.original, CropAspectRatioPreset.square, CropAspectRatioPreset.ratio4x3],
+          ),
+        ],
+      );
+
+      if (croppedFile != null) {
+        debugPrint('圖片裁切完成！檔案路徑: ${croppedFile.path}');
+        // 手機版裁切完後，把 CroppedFile 轉成 XFile 丟給上傳 API
+        _uploadAndAnalyze(XFile(croppedFile.path));
+      }
+    } catch (e) {
+      debugPrint('裁切圖片失敗: $e');
+    }
+  }
+
+  // --- 🌟 完美支援 Web 與手機的上傳 API ---
+  Future<void> _uploadAndAnalyze(XFile imageFile) async { 
+    _showLoadingDialog();
+
+    var apiUrl = Uri.parse('http://127.0.0.1:8000/medications/api/scan/');
+
+    try {
+      var request = http.MultipartRequest('POST', apiUrl);
+      
+      // 根據平台選擇打包圖片的方式
+      if (kIsWeb) {
+        // 網頁版必須用 Bytes 傳送
+        var bytes = await imageFile.readAsBytes(); 
+        var pic = http.MultipartFile.fromBytes(
+          'prescription_img', 
+          bytes, 
+          filename: imageFile.name, 
+        );
+        request.files.add(pic);
+      } else {
+        // 手機版可以直接用檔案路徑傳送
+        var pic = await http.MultipartFile.fromPath('prescription_img', imageFile.path);
+        request.files.add(pic);
+      }
+
+      var response = await request.send();
+      var responseData = await response.stream.bytesToString();
+      
+      if (!mounted) return;
+      Navigator.pop(context); 
+
+      if (response.statusCode == 200) {
+        var jsonResult = json.decode(responseData);
+        if (jsonResult['status'] == 'success') {
+          _showResultDialog(jsonResult['data']);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('辨識失敗: ${jsonResult['message']}'), backgroundColor: Colors.red));
+        }
+      } else {
+        debugPrint('伺服器錯誤: $responseData');
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('伺服器錯誤，請稍後再試！'), backgroundColor: Colors.red));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); 
+      debugPrint('網路連線錯誤: $e');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線到伺服器失敗: $e'), backgroundColor: Colors.red));
+    }
+  }
+
+  // --- 顯示轉圈圈的 Dialog ---
+  void _showLoadingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: Colors.teal),
+              SizedBox(height: 20),
+              Text("正在進行 AI 辨識...", style: TextStyle(fontSize: 16)),
+              SizedBox(height: 10),
+              Text("正在與伺服器連線中", style: TextStyle(color: Colors.grey, fontSize: 12)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // --- 辨識結果確認視窗 ---
+  void _showResultDialog(List<dynamic> drugsData) {
+    showDialog(
+      context: context,
+      barrierDismissible: false, 
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: const Row(
+            children: [
+              Icon(Icons.fact_check, color: Colors.teal),
+              SizedBox(width: 10),
+              Text('辨識結果確認', style: TextStyle(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: SingleChildScrollView( 
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('系統在您的藥單上找到以下藥品：', style: TextStyle(fontSize: 15)),
+                const SizedBox(height: 15),
+                
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.teal.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: drugsData.isEmpty 
+                      ? [const Text('未能辨識出任何藥品', style: TextStyle(color: Colors.red))]
+                      : drugsData.map((drug) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8.0),
+                            child: Text(
+                              '• ${drug['raw_name']} (${drug['frequency']}, ${drug['total_amount']})', 
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)
+                            ),
+                          );
+                        }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 15),
+                const Text('請問以上結果是否正確？', style: TextStyle(color: Colors.redAccent, fontSize: 14, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          
+          actionsAlignment: MainAxisAlignment.spaceEvenly, 
+          actions: [
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(context); 
+              },
+              icon: const Icon(Icons.close),
+              label: const Text('錯誤'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.redAccent,
+                side: const BorderSide(color: Colors.redAccent),
+              ),
+            ),
+            
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(context); 
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('✅ 準備進行資料庫存檔'), backgroundColor: Colors.teal),
+                );
+              },
+              icon: const Icon(Icons.check),
+              label: const Text('正確'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.teal,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+>>>>>>> 8b2d049c2c1a2be420fa6b3e248f0955c0ac2134
   @override
   Widget build(BuildContext context) {
     return Column(
