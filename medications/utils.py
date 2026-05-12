@@ -8,23 +8,20 @@ import re
 from django.db.models import Q
 from .models import Drug
 
-# 載入 .env 裡的環境變數
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 
-# ==========================================
-# 1.取得藥單圖片，交給gemini辨識，並回傳JSON格式藥品清單
-# ==========================================
+# 取得藥單圖片，交給gemini辨識，並回傳JSON格式藥品清單
 def extract_drugs_from_image(image_file):
     
-    print("👁️ [AI 視覺辨識] 正在閱讀前端傳來的藥單...")
+    print(" [AI 視覺辨識] 正在閱讀前端傳來的藥單...")
     model = genai.GenerativeModel('gemini-2.5-flash')
     
     try:
         img = Image.open(image_file)
     except Exception as e:
-        print(f"❌ 圖片開啟失敗：{e}")
+        print(f" 圖片開啟失敗：{e}")
         return []
     
     prompt = """這是一張藥單照片。請擷取所有藥品資料並整理成 JSON。格式：
@@ -43,13 +40,11 @@ def extract_drugs_from_image(image_file):
         )
         return json.loads(response.text)
     except Exception as e:
-        print(f"❌ Gemini 解析失敗：{e}")
+        print(f" Gemini 解析失敗：{e}")
         return []
     
 
-# ==========================================
-# 2.接收 AI 辨識出的核心藥名 (search_kw)，向資料庫查詢對應的詳細資料
-# ==========================================
+# 接收 AI 辨識出的核心藥名 (search_kw)，向資料庫查詢對應的詳細資料
 def search_drug_in_db(search_kw):    
 
     result = {
@@ -67,7 +62,6 @@ def search_drug_in_db(search_kw):
         return result
 
     # 執行模糊搜尋：使用 Q 物件同時搜尋中文或英文欄位
-    # ⚠️ 這裡的 chinese_name 與 english_name 記得對齊同學的新欄位命名
     match_drug = Drug.objects.filter(
         Q(med_ch__icontains=search_kw) | 
         Q(med_en__icontains=search_kw)
@@ -98,9 +92,7 @@ def search_drug_in_db(search_kw):
     return result
 
 
-# ==========================================
-# 3. 拿藥品成分做 FDA 交互作用、警語查詢 (打外部 API)
-# ==========================================
+#  拿藥品成分做 FDA 交互作用、警語查詢 (打外部 API)
 def query_openfda_interactions(ingredient):
     
     url = f"https://api.fda.gov/drug/label.json?search=openfda.generic_name:\"{ingredient}\"&limit=1"
@@ -113,13 +105,11 @@ def query_openfda_interactions(ingredient):
                 return "HAS_CONFLICT", str(interactions) if interactions else "無交互衝突"
         return "NO_DATA", "無資料"
     except Exception as e:
-        print(f"❌ FDA 查詢失敗 ({ingredient})：{e}")
+        print(f" FDA 查詢失敗 ({ingredient})：{e}")
         return "NO_DATA", "無資料"
     
 
-# ==========================================
-# 4. AI 批次翻譯 FDA 警告
-# ==========================================
+#  AI 批次翻譯 FDA 警告
 def batch_translate_fda_warnings(drugs_to_translate):
     """
     將收集到的 FDA 英文警告丟給 Gemini，
@@ -129,7 +119,7 @@ def batch_translate_fda_warnings(drugs_to_translate):
     if not drugs_to_translate:
         return {} 
         
-    print(f"🧠 [AI 批次翻譯] 發現 {len(drugs_to_translate)} 筆 FDA 英文資料，發送一次性請求...")
+    print(f" [AI 批次翻譯] 發現 {len(drugs_to_translate)} 筆 FDA 英文資料，發送一次性請求...")
     payload = json.dumps(drugs_to_translate, ensure_ascii=False)
     
     prompt = f"""
@@ -176,17 +166,16 @@ def batch_translate_fda_warnings(drugs_to_translate):
         # 格式會變成: {"Amoxicillin": [{"conflict_target": "...", "warning_desc": "..."}, ...]}
         return {item['drug_name']: item.get('warnings', []) for item in translated_list}
     except Exception as e:
-        print(f"❌ 批次翻譯與格式化失敗：{e}")
+        print(f" 批次翻譯與格式化失敗：{e}")
         return {}
     
 
 
-#將字串中的數字提取出來並轉為整數，例如 "9顆" -> 9, "3天" -> 3
+# 將字串中的數字提取出來並轉為整數，例如 "9顆" -> 9, "3天" -> 3
 def extract_int(text):
     
     if isinstance(text, int): 
         return text
-    # 這裡多加一個判斷，防止 None 報錯
     if not text:
         return 0
     nums = re.findall(r'\d+', str(text))

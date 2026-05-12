@@ -19,25 +19,23 @@ from accounts.models import User
 
 
 # ==========================================
-# 藥單圖片辨識 (Analyze Prescription)(初步辨識確認資料)
+# 藥單圖片辨識 (初步辨識確認資料)
 # ==========================================
-@csrf_exempt  # !!要記得刪不然錢錢會不見，暫時關閉 CSRF 驗證，等前端串接成功後再來加強安全性
+@csrf_exempt
 def analyze_prescription_api(request):
     if request.method == 'POST':
-        # 1. 接收前端傳來的圖片 (與前端約定好圖片的欄位名稱叫做 'prescription_img')
         image_file = request.FILES.get('prescription_img')
         
         if not image_file:
             return JsonResponse({'status': 'error', 'message': '未收到圖片檔，請確認欄位名稱是否為 prescription_img'}, status=400)
 
-        # 2. 呼叫你的 utils.py 進行 AI 辨識
+
         drugs_list = extract_drugs_from_image(image_file)
         
-        # 3. 回傳結果給前端
         if drugs_list:
             return JsonResponse({
                 'status': 'success',
-                'data': drugs_list  # 先直接把 AI 抓出來的原始陣列傳給前端看看
+                'data': drugs_list
             }, status=200)
         else:
             return JsonResponse({'status': 'error', 'message': '圖片解析失敗或找不到藥品'}, status=400)
@@ -46,13 +44,13 @@ def analyze_prescription_api(request):
 
 
 # ==========================================
-# 藥單確認與存檔 (Confirm and Save Prescription)(資料庫比對、查詢警告並存檔)
+# 藥單確認與存檔 (資料庫比對、查詢警告並存檔)
 # ==========================================
 @csrf_exempt 
 def confirm_and_save_prescription_api(request):
     if request.method == 'POST':
         try:
-            # 1. 收到前端確認好的資料 (拆包裹)
+            
             data_json_string = request.POST.get('data')
             if not data_json_string:
                 return JsonResponse({'status': 'error', 'message': '未收到藥單資料'}, status=400)
@@ -64,14 +62,11 @@ def confirm_and_save_prescription_api(request):
             final_report_data = []
             drugs_to_translate = []
 
-            # ----------------------------------------------------
-            # 第一階段：準備資料與查詢 (加入快取機制)
-            # ----------------------------------------------------
+            # 第一階段：準備資料與查詢
             for drug in drugs_list:
                 search_kw = drug.get('search_keyword', '')
                 db_info = search_drug_in_db(search_kw)
                 
-                # 提早去資料庫抓這顆藥的實體
                 db_drug = Drug.objects.filter(
                     Q(med_ch__icontains=search_kw) | Q(med_en__icontains=search_kw)
                 ).first()
@@ -97,7 +92,7 @@ def confirm_and_save_prescription_api(request):
                     # 資料庫連這顆藥都沒有，當然要查
                     need_fda_query = True
 
-                # 組合資料
+                
                 report_item = {
                     "raw_name": drug.get('raw_name', ''),
                     "search_keyword": search_kw,
@@ -120,7 +115,7 @@ def confirm_and_save_prescription_api(request):
                 
                 final_report_data.append(report_item)
 
-            # 2. 將新發現的衝突拿去給 AI 翻譯 (如果全部都命中快取，這裡就不會執行，超省錢！)
+            # 2. 將新發現的衝突拿去給 AI 翻譯 (如果全部都命中快取，這裡就不會執行)
             if drugs_to_translate:
                 translations_dict = batch_translate_fda_warnings(drugs_to_translate)
                 # 把翻譯好的警告塞回對應的藥裡面
@@ -129,19 +124,18 @@ def confirm_and_save_prescription_api(request):
                     if name in translations_dict:
                         data["fda_result"] = translations_dict[name]
 
-            # ----------------------------------------------------
+            
             #  第二階段：存入資料庫
-            # ----------------------------------------------------
             from django.utils import timezone
             
-            # [第一關] 確認使用者
+            # 確認使用者
             user_id = user_confirmed_data.get('user_id')
             try:
                 user_obj = User.objects.get(id=user_id)
             except User.DoesNotExist:
                 return JsonResponse({'status': 'error', 'message': f'找不到 ID 為 {user_id} 的使用者'}, status=404)
 
-            # [第二關] 存入藥單主檔
+            # 存入藥單主檔
             try:
                 h_name = user_confirmed_data.get('hospital_name', '未指定醫院')
                 v_date_str = user_confirmed_data.get('visit_date')
@@ -160,7 +154,7 @@ def confirm_and_save_prescription_api(request):
             except Exception as e:
                 return JsonResponse({'status': 'error', 'message': f'💥 [建立藥單主檔失敗] {str(e)}'}, status=500)
 
-            # [第三關] 存入藥品明細與警告
+            # 存入藥品明細與警告
             for data in final_report_data:
                 # 直接把剛才找好的 db_drug_obj 拿出來用，並從字典裡移除 (以免轉 JSON 時報錯)
                 db_drug = data.pop('db_drug_obj', None)
@@ -206,10 +200,8 @@ def confirm_and_save_prescription_api(request):
     return JsonResponse({'status': 'error', 'message': '僅支援 POST 請求'}, status=405)
 
 
-
-
 # ==========================================
-# 藥單列表 API (Get Prescription List)
+# 藥單列表
 # ==========================================
 @csrf_exempt
 def get_user_prescriptions_api(request, user_id):
@@ -224,7 +216,6 @@ def get_user_prescriptions_api(request, user_id):
                     "prescription_id": p.prescription_id,
                     "hospital_name": p.hospital_name,
                     "visit_date": p.visit_date.strftime('%Y-%m-%d'),
-                    # 順便計算這張藥單有幾顆藥
                     "drug_count": PrescriptionDrug.objects.filter(prescription=p).count(),
                     "image_url": p.image.url if p.image else None
                 })
@@ -233,19 +224,20 @@ def get_user_prescriptions_api(request, user_id):
         except Exception as e:
             return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
 
+
 # ==========================================
-# 藥單詳情 API (Get Prescription Detail)
+# 藥單詳情 (包含藥品明細與警告)
 # ==========================================    
 @csrf_exempt
 def get_prescription_detail_api(request, prescription_id):
     if request.method == 'GET':
         try:
-            # 1. 找出這張藥單的所有藥品明細
+            # 找出這張藥單的所有藥品明細
             drugs_in_p = PrescriptionDrug.objects.filter(prescription_id=prescription_id)
             
             detailed_data = []
             for item in drugs_in_p:
-                # 🌟 處理警告紀錄 (加上檢查，避免 item.drug 是空的)
+                # 處理警告紀錄 (加上檢查，避免 item.drug 是空的)
                 warning_list = []
                 if item.drug:
                     warnings = DrugWarning.objects.filter(drug=item.drug)
@@ -255,11 +247,10 @@ def get_prescription_detail_api(request, prescription_id):
                             "warning_desc": w.warning_desc
                         })
                 
-                # 2. 組合藥品資訊 (加上 id，並處理藥品可能為空的狀況)
+                #  組合藥品資訊 (加上 id，並處理藥品可能為空的狀況)
                 detailed_data.append({
-                    "id": item.id,  # 🌟 加上這行！這是刪除單顆藥品時唯一的憑據
+                    "id": item.id, 
                     "raw_name": item.raw_name,
-                    # 如果查不到官方藥品，就顯示預設文字
                     "med_ch": item.drug.med_ch if item.drug else "系統查無此藥品資訊",
                     "med_en": item.drug.med_en if item.drug else "Unknown Drug",
                     "frequency": item.frequency,
@@ -273,11 +264,11 @@ def get_prescription_detail_api(request, prescription_id):
         except Exception as e:
             return JsonResponse({'status': 'error', 'message': f"讀取詳情失敗: {str(e)}"}, status=500)
         
-# ==========================================
-# [個人管理 API] 手動新增藥單、新增藥品
-# ==========================================
+        
 
-# 1. 手動建立空白藥單 (只有醫院和日期)
+# ==========================================
+# 手動建立空白藥單 (只有醫院和日期)
+# ==========================================
 @csrf_exempt
 def create_manual_prescription_api(request):
     if request.method == 'POST':
@@ -295,7 +286,10 @@ def create_manual_prescription_api(request):
         except Exception as e:
             return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
 
-# 2. 手動新增「單顆」藥品到藥單中 (包含 FDA 與 AI 邏輯)
+
+# ==========================================
+# 手動新增「單顆」藥品到藥單中 (包含 FDA 與 AI 邏輯)
+# ==========================================
 @csrf_exempt
 def add_single_drug_api(request, prescription_id):
     if request.method == 'POST':
@@ -306,7 +300,6 @@ def add_single_drug_api(request, prescription_id):
             if not raw_name:
                 return JsonResponse({'status': 'error', 'message': '請輸入藥品名稱'}, status=400)
                 
-            # 後端自動把使用者輸入的藥名，當作搜尋關鍵字 (search_keyword)
             search_kw = raw_name
             
             # (A) 查詢資料庫與快取警告
@@ -323,7 +316,6 @@ def add_single_drug_api(request, prescription_id):
                     for w in warnings_in_db:
                         final_warnings.append({"conflict_target": w.conflict_target, "warning_desc": w.warning_desc})
                 else:
-                    # 沒快取才查 FDA + AI
                     if db_info.get("element") != "無資料":
                         status, fda_raw = query_openfda_interactions(db_info["element"])
                         if status == "HAS_CONFLICT":
@@ -336,7 +328,7 @@ def add_single_drug_api(request, prescription_id):
             new_pd = PrescriptionDrug.objects.create(
                 prescription_id=prescription_id,
                 drug=db_drug,
-                raw_name=raw_name, # 直接使用前端傳來的真實名稱
+                raw_name=raw_name, 
                 total_amount=extract_int(data.get('total_amount', '0')),
                 frequency=data.get('frequency', ''),
                 days=extract_int(data.get('days', '0'))
@@ -364,30 +356,30 @@ def add_single_drug_api(request, prescription_id):
             return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
             
     return JsonResponse({'status': 'error', 'message': '僅支援 POST 請求'}, status=405)
-        
-# 2. 修改藥單的醫院名稱或日期 (不修改藥品明細)
+
+
+# ==========================================        
+# 修改藥單的醫院名稱或日期 (不修改藥品明細)
+# ==========================================
 @csrf_exempt
 def update_prescription_api(request, prescription_id):
     if request.method in ['PUT', 'POST']:
         try:
             p = Prescription.objects.get(prescription_id=prescription_id)
             
-            # 解析前端傳來的新資料 (JSON 格式)
             body_unicode = request.body.decode('utf-8')
             data = json.loads(body_unicode)
-            
-            # 如果前端有傳 hospital_name，就更新它
+         
             if 'hospital_name' in data:
                 p.hospital_name = data['hospital_name']
                 
-            # 如果前端有傳 visit_date，就轉換格式並更新它
             if 'visit_date' in data:
                 from django.utils.dateparse import parse_date
                 parsed_date = parse_date(data['visit_date'])
                 if parsed_date:
                     p.visit_date = parsed_date
 
-            p.save() # 存檔
+            p.save() 
             
             return JsonResponse({
                 'status': 'success', 
@@ -407,11 +399,10 @@ def update_prescription_api(request, prescription_id):
 
     return JsonResponse({'status': 'error', 'message': '僅支援 PUT 或 POST 請求'}, status=405)
 
-# ----------------------------------------------------
-# 刪除功能：整張藥單 vs 單顆藥品
-# ----------------------------------------------------
 
+# ==========================================
 # 刪除整張藥單 (會連動刪除該藥單下的所有藥品明細)
+# ==========================================
 @csrf_exempt
 def delete_prescription_api(request, prescription_id):
     if request.method in ['DELETE', 'POST']:
@@ -424,7 +415,10 @@ def delete_prescription_api(request, prescription_id):
         except Exception as e:
             return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
         
+
+# ==========================================
 # 只刪除藥單中的某「一顆」藥品紀錄
+# ==========================================
 @csrf_exempt
 def delete_single_drug_api(request, pd_id):
     if request.method in ['DELETE', 'POST']:
