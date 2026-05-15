@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import reminders
 
 urlpatterns = [
     # 辨識藥單 
@@ -32,4 +33,6 @@ urlpatterns = [
     # 用藥安全檢查
     path('api/check_all_safety/', views.check_all_medications_safety_api, name='check_all_safety'),
 
+    # 設定吃藥提醒的 
+    path('api/reminders/set/', reminders.set_medication_reminder, name='set_reminder'),
 ]
