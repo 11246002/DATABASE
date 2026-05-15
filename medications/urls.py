@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import reminders
 
 urlpatterns = [
     # 辨識藥單 
@@ -26,7 +27,6 @@ urlpatterns = [
    # 刪除整張藥單 
     path('api/prescriptions/<int:prescription_id>/delete/', views.delete_prescription_api, name='api_delete_prescription'),
 
-    # 刪除藥單中的某一顆藥品紀錄
-    path('api/prescriptions/drug/<int:pd_id>/delete/', views.delete_single_drug_api, name='api_delete_single_drug'),
-
+    # 設定吃藥提醒的 
+    path('api/reminders/set/', reminders.set_medication_reminder, name='set_reminder'),
 ]
