@@ -32,7 +32,7 @@ class Prescription(models.Model):
 )
 
     def __str__(self):
-        return f"{self.user.id} - {self.hospital_name}"
+        return f"{self.user.user_name} - {self.hospital_name}"
 
 
 class DrugWarning(models.Model):
@@ -79,7 +79,7 @@ class PrescriptionDrug(models.Model):
     )
 
     def __str__(self):
-        return f"{self.raw_name} ({self.frequency})"
+        return f"藥單編號:{self.prescription.prescription_id},藥品編號:{self.id} - {self.raw_name} ({self.frequency})"
     
 
 class Remind(models.Model):
