@@ -449,6 +449,9 @@ class _MainAppPageState extends State<MainAppPage> {
 // ==========================================
 // 🌟 串接真實 API 版：全螢幕掃描相機視窗
 // ==========================================
+// ==========================================
+// 🌟 串接真實 API 版：全螢幕掃描相機視窗
+// ==========================================
 class ScanPrescriptionSheet extends StatefulWidget {
   const ScanPrescriptionSheet({super.key});
   @override
@@ -516,13 +519,11 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
   // 🌟 真實串接 1：上傳圖片給 AI 辨識
   Future<void> _uploadAndAnalyze(XFile imageFile) async { 
     _showLoadingDialog("正在由 AI 分析藥單...");
-    // 💡 注意：這邊換成共用的 API_BASE_URL
     var apiUrl = Uri.parse('$API_BASE_URL/medications/api/scan/');
 
     try {
       var request = http.MultipartRequest('POST', apiUrl);
       
-      // 夾帶圖片檔案
       if (kIsWeb) {
         var bytes = await imageFile.readAsBytes(); 
         var pic = http.MultipartFile.fromBytes('prescription_img', bytes, filename: imageFile.name);
@@ -532,21 +533,17 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
         request.files.add(pic);
       }
 
-      debugPrint('👉 準備發送圖片至: $apiUrl');
       var response = await request.send();
-      
-      // 💡 確保中文不會變成亂碼
       var responseData = utf8.decode(await response.stream.toBytes()); 
-      debugPrint('👈 收到辨識結果: $responseData');
       
       if (!mounted) return;
-      Navigator.pop(context); // 關閉載入框
+      Navigator.pop(context); 
 
       if (response.statusCode == 200) {
         var jsonResult = json.decode(responseData);
         if (jsonResult['status'] == 'success') {
-          // 呼叫確認視窗，把抓到的藥品清單丟進去
-          _showResultDialog(jsonResult['data'] ?? []);
+          // 💡 修改點 1：把 imageFile 一起丟給確認視窗，因為下一步還要用！
+          _showResultDialog(jsonResult['data'] ?? [], imageFile);
         } else {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('辨識失敗: ${jsonResult['message']}'), backgroundColor: Colors.red));
         }
@@ -581,7 +578,8 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
     );
   }
 
-  void _showResultDialog(List<dynamic> drugsData) {
+  // 💡 修改點 2：函式多接收一個 XFile 參數
+  void _showResultDialog(List<dynamic> drugsData, XFile imageFile) {
     showDialog(
       context: context,
       barrierDismissible: false, 
@@ -636,7 +634,8 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(context); 
-                _checkInteractionsAndSave(drugsData); 
+                // 💡 修改點 3：把圖片傳給儲存 API
+                _checkInteractionsAndSave(drugsData, imageFile); 
               },
               style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white),
               child: const Text('確認並檢測'),
@@ -647,48 +646,68 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
     );
   }
 
-  // 🌟 真實串接 2：儲存藥單並讓後端檢查交互作用
-  Future<void> _checkInteractionsAndSave(List<dynamic> drugsData) async {
+  // 🌟 💡 終極修改：改用 Form-data 傳送，並符合所有欄位名稱
+  Future<void> _checkInteractionsAndSave(List<dynamic> drugsData, XFile imageFile) async {
     _showLoadingDialog("正在安全儲存藥單並進行交互作用檢測...");
     
     try {
-      // 從手機記憶體抓出 user_id
       SharedPreferences prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('user_id');
 
-      // 💡 準備送給後端的儲存包裹 (JSON)
-      // 如果你們 API 規格書有改變名字，請請後端同學對齊這裡的 key！
-      Map<String, dynamic> payload = {
+      // 1. 整理藥品陣列，嚴格對齊規格書要求的欄位
+      List<Map<String, dynamic>> confirmedDrugs = drugsData.map((drug) {
+        return {
+          "raw_name": drug['raw_name'] ?? "未知藥物",
+          "search_keyword": drug['search_keyword'] ?? drug['raw_name'] ?? "未知藥物", // 規格書要求要有這個
+          "frequency": drug['frequency'] ?? "每日三次",
+          "days": drug['days']?.toString() ?? "3", 
+          "total_amount": drug['total_amount']?.toString() ?? "9"
+        };
+      }).toList();
+
+      // 2. 準備打包成 JSON 字串的 data
+      Map<String, dynamic> payloadData = {
         "user_id": userId,
-        "hospital_name": "掃描建立的藥單", // 預設名稱，也可讓 AI 一起辨識
+        "hospital_name": "掃描建立的藥單",
         "visit_date": "${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}",
-        "meds": drugsData
+        "confirmed_drugs": confirmedDrugs // 陣列名稱改為 confirmed_drugs
       };
 
-      debugPrint('👉 準備傳送儲存資料至後端: ${json.encode(payload)}');
+      // 3. 改用 MultipartRequest (Form-data) 發送
+      var apiUrl = Uri.parse('$API_BASE_URL/medications/api/confirm_and_save/');
+      var request = http.MultipartRequest('POST', apiUrl);
 
-      // 💡 呼叫儲存與檢測的 API 
-      // (TODO: 後端同學請確認這支儲存+檢測的 API 路徑是不是長這樣！)
-      final response = await http.post(
-        Uri.parse('$API_BASE_URL/medications/api/prescriptions/create_from_scan/'), 
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode(payload),
-      );
+      // (A) 把 JSON 轉成字串，塞進 'data' 欄位
+      request.fields['data'] = json.encode(payloadData);
 
-      final data = json.decode(utf8.decode(response.bodyBytes));
-      debugPrint('👈 收到檢測結果: $data');
+      // (B) 把圖片再次塞進 'prescription_img' 欄位
+      if (kIsWeb) {
+        var bytes = await imageFile.readAsBytes();
+        var pic = http.MultipartFile.fromBytes('prescription_img', bytes, filename: imageFile.name);
+        request.files.add(pic);
+      } else {
+        var pic = await http.MultipartFile.fromPath('prescription_img', imageFile.path);
+        request.files.add(pic);
+      }
+
+      debugPrint('👉 準備傳送 Form-data 儲存資料至後端...');
+      var response = await request.send();
+      var responseData = utf8.decode(await response.stream.toBytes());
+      
+      debugPrint('👈 收到檢測結果: $responseData');
       
       if (!mounted) return;
       Navigator.pop(context); // 關閉載入框
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        // 💡 根據後端回傳的 JSON 判斷有沒有危險 (這裡假設後端有傳回 has_danger 布林值)
+        var data = json.decode(responseData);
         bool hasInteraction = data['has_danger'] == true; 
         String interactionDetails = data['danger_message'] ?? "請留意藥物使用安全，若有不適請立即停藥。";
         
         _showFinalResultDialog(hasInteraction, interactionDetails);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('儲存失敗: ${data['message'] ?? '未知錯誤'}'), backgroundColor: Colors.redAccent));
+        // 如果還是出錯，直接把後端的錯誤吐在畫面上，方便抓蟲
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('儲存失敗: $responseData'), backgroundColor: Colors.redAccent, duration: const Duration(seconds: 5)));
       }
 
     } catch (e) {
@@ -717,8 +736,7 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
           Center(
             child: ElevatedButton(
               onPressed: () {
-                Navigator.pop(context); // 關閉結果視窗
-                // 🌟 最重要的收尾：跳回主頁面，強制重新抓取「我的藥袋」讓新藥單出現！
+                Navigator.pop(context); 
                 Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const MainAppPage()));
               },
               style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
@@ -771,7 +789,6 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // 💡 網頁版點這裡可以直接開啟檔案總管選照片！
                       IconButton(icon: const Icon(Icons.photo_library, color: Colors.white, size: 32), onPressed: _pickImageFromGallery),
                       const Text('相簿上傳', style: TextStyle(color: Colors.white, fontSize: 12)),
                     ],
@@ -796,9 +813,6 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
     );
   }
 }
-// ==========================================
-// 🌟 串接真實 API 版：【我的藥袋】總覽頁面
-// ==========================================
 class MyMedicationBagPage extends StatefulWidget {
   const MyMedicationBagPage({super.key});
   @override
@@ -1055,6 +1069,9 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
 // ==========================================
 // 🌟 真實功能+用藥安全紅綠燈版：【個別藥單詳細頁面】
 // ==========================================
+// ==========================================
+// 🌟 真實功能+用藥安全紅綠燈版：【個別藥單詳細頁面】
+// ==========================================
 class PrescriptionDetailPage extends StatefulWidget {
   final Map<String, dynamic> prescription;
   const PrescriptionDetailPage({super.key, required this.prescription});
@@ -1063,7 +1080,59 @@ class PrescriptionDetailPage extends StatefulWidget {
 }
 
 class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
-  
+  bool _isLoading = true; // 載入狀態
+  List<dynamic> _meds = []; // 用來裝後端傳來的藥品明細
+  bool _hasSevereDanger = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchPrescriptionDetails(); // 一進畫面就去抓資料
+  }
+
+  // 🌟 核心 API 串接：取得單一藥單的所有藥品明細
+// 🌟 核心 API 串接：取得單一藥單的所有藥品明細
+  Future<void> _fetchPrescriptionDetails() async {
+    final pid = widget.prescription['prescription_id'];
+    if (pid == null) {
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    try {
+      debugPrint('👉 準備獲取藥單明細，ID: $pid');
+      final response = await http.get(
+        Uri.parse('$API_BASE_URL/medications/api/prescriptions/$pid/'),
+      );
+
+      // 🚨 終極抓蟲神器：把後端回傳的原始字串，原汁原味印出來！
+      final rawResponse = utf8.decode(response.bodyBytes);
+      debugPrint('🚨 後端真實回傳: $rawResponse');
+
+      final data = json.decode(rawResponse);
+
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        setState(() {
+          if (data['data'] is List) {
+            _meds = List<dynamic>.from(data['data']); 
+          } else {
+            // 我多加了 confirmed_drugs 和 prescription_drugs 來猜猜看
+            _meds = data['data']['medications'] ?? data['data']['drugs'] ?? data['data']['meds'] ?? data['data']['confirmed_drugs'] ?? data['data']['prescription_drugs'] ?? [];
+          }
+          
+          _hasSevereDanger = _meds.any((m) => m['is_severe_danger'] == true);
+        });
+        debugPrint('✅ 成功抓取 ${_meds.length} 筆藥品明細！');
+      } else {
+        debugPrint('抓取明細失敗: ${data['message']}');
+      }
+    } catch (e) {
+      debugPrint('連線錯誤: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   void _showAddDrugDialog() {
     final TextEditingController nameCtrl = TextEditingController();
     final TextEditingController freqCtrl = TextEditingController(text: '每日三次');
@@ -1113,32 +1182,9 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
               onPressed: () {
-                if (nameCtrl.text.isEmpty) return;
-
-                debugPrint('後端串接提示 -> 藥品 JSON: {"raw_name": "${nameCtrl.text}", "frequency": "${freqCtrl.text}", "days": "${daysCtrl.text}天", "total_amount": "${amountCtrl.text}顆"}');
-
-                setState(() {
-                  widget.prescription['meds'].add({
-                    'id': DateTime.now().millisecondsSinceEpoch, 
-                    'raw_name': nameCtrl.text,
-                    'med_ch': nameCtrl.text,
-                    'frequency': freqCtrl.text,
-                    'days': int.tryParse(daysCtrl.text) ?? 3,
-                    'total_amount': int.tryParse(amountCtrl.text) ?? 9,
-                    'is_severe_danger': simulateSevereDanger,
-                    'warnings': simulateSevereDanger 
-                        ? [
-                            {
-                              'conflict_target': '模擬衝突對象藥物',
-                              'warning_desc': '與本藥品產生紅色致命交互作用，請立即諮詢主治醫師。',
-                              'is_drug_conflict': true
-                            }
-                          ]
-                        : []
-                  });
-                });
+                // TODO: 這裡未來可以串接「新增單筆藥品」的 API
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ 單顆藥品手動新增並完成比對！'), backgroundColor: Colors.teal));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('這項功能準備中！'), backgroundColor: Colors.teal));
               },
               child: const Text('加入', style: TextStyle(color: Colors.white)),
             ),
@@ -1150,9 +1196,6 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    List<dynamic> meds = widget.prescription['meds'] ?? [];
-    bool hasSevereDanger = meds.any((m) => m['is_severe_danger'] == true);
-
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7F9),
       appBar: AppBar(
@@ -1169,9 +1212,9 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
               Container(
                 width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 25),
                 decoration: BoxDecoration(
-                  color: hasSevereDanger ? Colors.redAccent : Colors.teal,
+                  color: _hasSevereDanger ? Colors.redAccent : Colors.teal,
                   borderRadius: BorderRadius.circular(15),
-                  boxShadow: [BoxShadow(color: (hasSevereDanger ? Colors.red : Colors.teal).withOpacity(0.3), spreadRadius: 1, blurRadius: 5, offset: const Offset(0, 3))],
+                  boxShadow: [BoxShadow(color: (_hasSevereDanger ? Colors.red : Colors.teal).withOpacity(0.3), spreadRadius: 1, blurRadius: 5, offset: const Offset(0, 3))],
                 ),
                 child: Center(
                   child: Text(
@@ -1221,128 +1264,128 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                       const SizedBox(height: 20),
                       const Divider(),
 
+                      // 🌟 動態顯示藥品清單
                       Expanded(
-                        child: meds.isEmpty
-                        ? const Center(child: Text('此藥單目前沒有任何藥品紀錄', style: TextStyle(color: Colors.grey)))
-                        : ListView.builder(
-                          itemCount: meds.length,
-                          itemBuilder: (context, index) {
-                            final med = meds[index];
-                            bool isDanger = med['is_severe_danger'] == true;
+                        child: _isLoading 
+                        ? const Center(child: CircularProgressIndicator(color: Colors.teal))
+                        : _meds.isEmpty
+                          ? const Center(child: Text('此藥單目前沒有任何藥品紀錄', style: TextStyle(color: Colors.grey)))
+                          : ListView.builder(
+                              itemCount: _meds.length,
+                              itemBuilder: (context, index) {
+                                final med = _meds[index];
+                                bool isDanger = med['is_severe_danger'] == true;
 
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              child: Dismissible(
-                                key: Key(med['id'].toString()),
-                                direction: DismissDirection.endToStart, 
-                                background: Container(
-                                  padding: const EdgeInsets.only(right: 20),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(12),
-                                    color: Colors.redAccent,
-                                  ),
-                                  alignment: Alignment.centerRight,
-                                  child: const Icon(Icons.delete_forever, color: Colors.white, size: 28),
-                                ),
-                                onDismissed: (direction) {
-                                  debugPrint('後端串接提示 -> 刪除單顆藥品明細 API, ID (pd_id): ${med['id']}');
-                                  setState(() {
-                                    meds.removeAt(index);
-                                  });
-                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已成功移除 ${med['raw_name']}'), backgroundColor: Colors.redAccent));
-                                },
-                                child: Container(
-                                  width: double.infinity, padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: isDanger ? Colors.redAccent : Colors.grey.shade200, width: isDanger ? 2.0 : 1.0),
-                                    boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 3)],
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 12),
+                                  child: Dismissible(
+                                    key: Key(med['id'].toString()),
+                                    direction: DismissDirection.endToStart, 
+                                    background: Container(
+                                      padding: const EdgeInsets.only(right: 20),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(12),
+                                        color: Colors.redAccent,
+                                      ),
+                                      alignment: Alignment.centerRight,
+                                      child: const Icon(Icons.delete_forever, color: Colors.white, size: 28),
+                                    ),
+                                    onDismissed: (direction) {
+                                      // TODO: 串接刪除單一藥品 API
+                                      setState(() { _meds.removeAt(index); });
+                                    },
+                                    child: Container(
+                                      width: double.infinity, padding: const EdgeInsets.all(16),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: isDanger ? Colors.redAccent : Colors.grey.shade200, width: isDanger ? 2.0 : 1.0),
+                                        boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 3)],
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
-                                          Expanded(
-                                            child: Row(
-                                              children: [
-                                                if (isDanger) ...[
-                                                  const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 24),
-                                                  const SizedBox(width: 6),
-                                                ],
-                                                Expanded(
-                                                  child: Text(
-                                                    med['raw_name'], 
-                                                    style: TextStyle(
-                                                      fontSize: 18, 
-                                                      fontWeight: isDanger ? FontWeight.bold : FontWeight.bold, 
-                                                      color: isDanger ? Colors.redAccent : Colors.black87 
-                                                    )
-                                                  ),
+                                          Row(
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                            children: [
+                                              Expanded(
+                                                child: Row(
+                                                  children: [
+                                                    if (isDanger) ...[
+                                                      const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 24),
+                                                      const SizedBox(width: 6),
+                                                    ],
+                                                    Expanded(
+                                                      child: Text(
+                                                        med['raw_name'] ?? '未知藥品', 
+                                                        style: TextStyle(
+                                                          fontSize: 18, 
+                                                          fontWeight: isDanger ? FontWeight.bold : FontWeight.bold, 
+                                                          color: isDanger ? Colors.redAccent : Colors.black87 
+                                                        )
+                                                      ),
+                                                    ),
+                                                  ],
                                                 ),
-                                              ],
-                                            ),
+                                              ),
+                                              InkWell(
+                                                onTap: () {
+                                                  showDialog(
+                                                    context: context, 
+                                                    builder: (context) => AlertDialog(
+                                                      title: Text('${med['raw_name']} 詳細資訊', style: const TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
+                                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                                                      content: Text('中文譯名：${med['med_ch'] ?? "無資料"}\n服用天數：${med['days'] ?? "未知"}天\n總計數量：${med['total_amount'] ?? "未知"}'),
+                                                      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('關閉'))],
+                                                    )
+                                                  );
+                                                },
+                                                child: Container(
+                                                  width: 35, height: 35,
+                                                  decoration: BoxDecoration(color: isDanger ? Colors.red.withOpacity(0.1) : Colors.teal.shade50, shape: BoxShape.circle),
+                                                  child: Center(child: Icon(Icons.info_outline, color: isDanger ? Colors.redAccent : Colors.teal, size: 18)),
+                                                ),
+                                              )
+                                            ],
                                           ),
-                                          InkWell(
-                                            onTap: () {
-                                              showDialog(
-                                                context: context, 
-                                                builder: (context) => AlertDialog(
-                                                  title: Text('${med['raw_name']} 詳細資訊', style: const TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
-                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                                                  content: Text('中文譯名：${med['med_ch'] ?? "檢測中"}\n服用天數：${med['days']}天\n總計數量：${med['total_amount']}'),
-                                                  actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('關閉'))],
-                                                )
+                                          const SizedBox(height: 6),
+                                          Text('用法頻率: ${med['frequency'] ?? ""}  |  看診天數: ${med['days'] ?? ""}天  |  總量: ${med['total_amount'] ?? ""}', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                                          
+                                          if (med['warnings'] != null && (med['warnings'] as List).isNotEmpty) ...[
+                                            const SizedBox(height: 10),
+                                            const Divider(),
+                                            const SizedBox(height: 4),
+                                            ...(med['warnings'] as List).map<Widget>((warn) {
+                                              bool isConflict = warn['is_drug_conflict'] == true;
+                                              return Padding(
+                                                padding: const EdgeInsets.only(top: 4.0),
+                                                child: Row(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Icon(Icons.gpp_maybe, size: 16, color: isConflict ? Colors.redAccent : Colors.orange),
+                                                    const SizedBox(width: 4),
+                                                    Expanded(
+                                                      child: Text(
+                                                        '【${warn['conflict_target']}】${warn['warning_desc']}',
+                                                        style: TextStyle(
+                                                          fontSize: 12,
+                                                          color: isConflict ? Colors.redAccent : Colors.black87,
+                                                          fontWeight: isConflict ? FontWeight.bold : FontWeight.normal,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
                                               );
-                                            },
-                                            child: Container(
-                                              width: 35, height: 35,
-                                              decoration: BoxDecoration(color: isDanger ? Colors.red.withOpacity(0.1) : Colors.teal.shade50, shape: BoxShape.circle),
-                                              child: Center(child: Icon(Icons.info_outline, color: isDanger ? Colors.redAccent : Colors.teal, size: 18)),
-                                            ),
-                                          )
+                                            }).toList()
+                                          ]
                                         ],
                                       ),
-                                      const SizedBox(height: 6),
-                                      Text('用法頻率: ${med['frequency']}  |  看診天數: ${med['days']}天  |  總量: ${med['total_amount']}', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
-                                      
-                                      if (med['warnings'] != null && (med['warnings'] as List).isNotEmpty) ...[
-                                        const SizedBox(height: 10),
-                                        const Divider(),
-                                        const SizedBox(height: 4),
-                                        ...(med['warnings'] as List).map<Widget>((warn) {
-                                          bool isConflict = warn['is_drug_conflict'] == true;
-                                          return Padding(
-                                            padding: const EdgeInsets.only(top: 4.0),
-                                            child: Row(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Icon(Icons.gpp_maybe, size: 16, color: isConflict ? Colors.redAccent : Colors.orange),
-                                                const SizedBox(width: 4),
-                                                Expanded(
-                                                  child: Text(
-                                                    '【${warn['conflict_target']}】${warn['warning_desc']}',
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                      color: isConflict ? Colors.redAccent : Colors.black87,
-                                                      fontWeight: isConflict ? FontWeight.bold : FontWeight.normal,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          );
-                                        }).toList()
-                                      ]
-                                    ],
+                                    ),
                                   ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+                                );
+                              },
+                            ),
                       ),
                     ],
                   ),
@@ -1355,7 +1398,6 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
     );
   }
 }
-
 class ReminderSettingsPage extends StatefulWidget {
   const ReminderSettingsPage({super.key});
   @override
