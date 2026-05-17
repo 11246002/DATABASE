@@ -1,30 +1,26 @@
-# === 前端 Flutter/Dart 忽略清單 (已修正路徑) ===
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-# 拿掉最前面的斜線，這樣不管 build 在哪層都會被擋掉
-build/
-coverage/
-
-# Symbolication related
-app.*.symbols
-
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
-# 加上 **/ 讓它懂得找 app 資料夾裡面的 android
-**/android/app/debug
-**/android/app/profile
-**/android/app/release
-
 # === 後端 Django 忽略清單 ===
 venv/
 .env
 __pycache__/
 *.pyc
-prescriptions/
 db.sqlite3
+media/
+
+# === 前端 Flutter (精確過濾) ===
+# 只過濾 build 資料夾，千萬不要過濾整個 app/android/ 
+app/build/
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/.packages
+app/.pub-cache/
+app/.pub/
+
+# 這是電腦產生的本地設定檔，不傳
+app/local.properties
+app/**/generated_plugin_registrant.*
+
+# 排除特定的 build 產物，但保留原始碼
+**/android/app/debug
+**/android/app/profile
+**/android/app/release

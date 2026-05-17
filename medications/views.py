@@ -12,7 +12,8 @@ from .utils import (
     search_drug_in_db, 
     query_openfda_interactions, 
     batch_translate_fda_warnings,
-    extract_int
+    extract_int,
+    check_user_medication_safety
 )
 from .models import Prescription, PrescriptionDrug, DrugWarning, Drug
 from accounts.models import User
@@ -131,7 +132,7 @@ def confirm_and_save_prescription_api(request):
             # 確認使用者
             user_id = user_confirmed_data.get('user_id')
             try:
-                user_obj = User.objects.get(id=user_id)
+                user_obj = User.objects.get(user_id=user_id)
             except User.DoesNotExist:
                 return JsonResponse({'status': 'error', 'message': f'找不到 ID 為 {user_id} 的使用者'}, status=404)
 
@@ -431,3 +432,36 @@ def delete_single_drug_api(request, pd_id):
             return JsonResponse({'status': 'error', 'message': '找不到該藥品紀錄'}, status=404)
         except Exception as e:
             return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+        
+
+# ==========================================
+# 總體用藥安全檢查 API (呼叫 utils 工具版)
+# ==========================================
+@csrf_exempt
+def check_all_medications_safety_api(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            user_id = data.get('user_id')
+
+            if not user_id:
+                return JsonResponse({'status': 'error', 'message': '缺少 user_id'}, status=400)
+
+            # 🌟 核心：直接把 user_id 丟給小工具去運算，我們只負責收結果
+            is_success, result = check_user_medication_safety(user_id)
+
+            if is_success:
+                return JsonResponse({
+                    'status': 'success',
+                    'message': '總體用藥安全檢查完成',
+                    'data': result # 這裡的 result 是裝滿危險名單的 List
+                }, status=200)
+            else:
+                # 如果 is_success 是 False，代表 result 裡面裝的是錯誤訊息
+                status_code = 404 if '找不到' in result else 500
+                return JsonResponse({'status': 'error', 'message': result}, status=status_code)
+
+        except Exception as e:
+            return JsonResponse({'status': 'error', 'message': f"API 解析錯誤: {str(e)}"}, status=500)
+
+    return JsonResponse({'status': 'error', 'message': '僅支援 POST 請求'}, status=405)

@@ -6,7 +6,7 @@ API_URL = "http://127.0.0.1:8000/medications/api/confirm_and_save/"
 
 # 2. 模擬前端 (Flutter) 準備的 JSON 資料
 payload_dict = {
-  "user_id": 4,
+  "user_id": 3,
   "hospital_name": "台大醫院",
   "visit_date": "2026-05-10",
   "confirmed_drugs": [

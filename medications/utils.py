@@ -6,7 +6,8 @@ from PIL import Image
 from dotenv import load_dotenv
 import re
 from django.db.models import Q
-from .models import Drug
+from .models import Drug, PrescriptionDrug, DrugWarning
+from accounts.models import User
 
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
@@ -170,7 +171,6 @@ def batch_translate_fda_warnings(drugs_to_translate):
         return {}
     
 
-
 # 將字串中的數字提取出來並轉為整數，例如 "9顆" -> 9, "3天" -> 3
 def extract_int(text):
     
@@ -180,3 +180,77 @@ def extract_int(text):
         return 0
     nums = re.findall(r'\d+', str(text))
     return int(nums[0]) if nums else 0
+
+
+# 用藥安全檢查小工具：負責交叉比對過敏與藥物衝突。
+def check_user_medication_safety(user_id):
+    try:
+        # 1. 抓出使用者，並整理過敏原
+        user_obj = User.objects.filter(user_id=user_id).first()
+        if not user_obj:
+            return False, '找不到使用者'
+
+        allergy_keywords = []
+        if user_obj.allergies:
+            allergy_keywords = [k.strip().lower() for k in user_obj.allergies.replace('，', ',').split(',') if k.strip()]
+
+        # 2. 抓出該使用者「所有藥單」底下的「所有藥品」
+        all_user_drugs = PrescriptionDrug.objects.filter(
+            prescription__user=user_obj
+        ).select_related('drug', 'prescription')
+
+        current_drug_names = []
+        for pd in all_user_drugs:
+            if pd.raw_name: current_drug_names.append(pd.raw_name.lower())
+            if pd.drug and pd.drug.med_ch: current_drug_names.append(pd.drug.med_ch.lower())
+            if pd.drug and pd.drug.med_en: current_drug_names.append(pd.drug.med_en.lower())
+
+        result_data = []
+
+        # 3. 開始比對
+        for pd in all_user_drugs:
+            drug_info = {
+                'prescription_id': pd.prescription.prescription_id,
+                'prescription_drug_id': pd.id,
+                'raw_name': pd.raw_name,
+                'med_ch': pd.drug.med_ch if pd.drug else '未知藥品',
+                'hospital': pd.prescription.hospital_name,
+                'is_severe_danger': False,
+                'warnings': []
+            }
+
+            if pd.drug:
+                warnings = DrugWarning.objects.filter(drug=pd.drug)
+                for w in warnings:
+                    target = w.conflict_target.lower()
+                    
+                    # [A] 檢查過敏
+                    hit_allergy = any(kw in target or target in kw for kw in allergy_keywords)
+                    
+                    # [B] 檢查其他藥品衝突
+                    hit_other_drug = False
+                    for other_name in current_drug_names:
+                        if other_name not in pd.raw_name.lower() and other_name not in (pd.drug.med_ch.lower() if pd.drug.med_ch else ""):
+                            if target in other_name or other_name in target:
+                                hit_other_drug = True
+                                break
+
+                    if hit_allergy or hit_other_drug:
+                        drug_info['is_severe_danger'] = True
+
+                    drug_info['warnings'].append({
+                        'conflict_target': w.conflict_target,
+                        'warning_desc': w.warning_desc,
+                        'is_allergy_conflict': hit_allergy,
+                        'is_drug_conflict': hit_other_drug
+                    })
+
+            if drug_info['warnings']:
+                result_data.append(drug_info)
+
+        # 檢查順利完成，回傳 True 和整理好的資料
+        return True, result_data
+
+    except Exception as e:
+        # 發生錯誤，回傳 False 和錯誤訊息
+        return False, f"核心比對系統錯誤: {str(e)}"

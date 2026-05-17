@@ -32,7 +32,7 @@ class Prescription(models.Model):
 )
 
     def __str__(self):
-        return f"{self.user.id} - {self.hospital_name}"
+        return f"{self.user.user_name} - {self.hospital_name}"
 
 
 class DrugWarning(models.Model):
@@ -79,7 +79,7 @@ class PrescriptionDrug(models.Model):
     )
 
     def __str__(self):
-        return f"{self.raw_name} ({self.frequency})"
+        return f"藥單編號:{self.prescription.prescription_id},藥品編號:{self.id} - {self.raw_name} ({self.frequency})"
     
 
 class Remind(models.Model):
@@ -114,3 +114,19 @@ class TakingRecord(models.Model):
 
     def __str__(self):
         return f"{self.remind} - {self.status}"
+    
+
+class MedicationReminder(models.Model):
+    # 關聯到使用者
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    # 藥品名稱
+    medication_name = models.CharField(max_length=100)
+    # 提醒時間 (例如 08:00)
+    reminder_time = models.TimeField()
+    # 是否開啟提醒
+    is_active = models.BooleanField(default=True)
+    # 建立時間
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.medication_name} at {self.reminder_time}"
