@@ -40,7 +40,7 @@ class User(AbstractBaseUser):
     REQUIRED_FIELDS = []          # 終端機建立時不強制要求填身高體重
 
     def __str__(self):
-        return self.user_name
+        return f"{self.user_id}: {self.user_name}"
 
     # 以下是能順利登入 Django 網頁後台的必備通行證
     @property

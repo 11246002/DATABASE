@@ -276,7 +276,7 @@ def create_manual_prescription_api(request):
         try:
             data = json.loads(request.body.decode('utf-8'))
             user_id = data.get('user_id')
-            user_obj = User.objects.get(id=user_id)
+            user_obj = User.objects.get(user_id=user_id)
 
             new_p = Prescription.objects.create(
                 user=user_obj,

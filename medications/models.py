@@ -32,7 +32,7 @@ class Prescription(models.Model):
 )
 
     def __str__(self):
-        return f"{self.user.user_name} - {self.hospital_name}"
+        return f"藥單編號:{self.prescription_id} - {self.user.user_name} - {self.hospital_name}"
 
 
 class DrugWarning(models.Model):
@@ -96,7 +96,7 @@ class Remind(models.Model):
     remind_time = models.TimeField()
 
     def __str__(self):
-        return f"{self.prescription_drug.raw_name} - {self.remind_time}"
+        return f"{self.prescription_drug.raw_name} - {self.frequency_tag} at {self.remind_time}"
     
 
 class TakingRecord(models.Model):
@@ -129,4 +129,4 @@ class MedicationReminder(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.user.username} - {self.medication_name} at {self.reminder_time}"
+        return f"{self.user.user_name} - {self.medication_name} at {self.reminder_time}"
