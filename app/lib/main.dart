@@ -820,42 +820,29 @@ class MyMedicationBagPage extends StatefulWidget {
 }
 
 class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
-  // 🌟 用來裝後端回傳的真實資料，一開始是空的
   List<Map<String, dynamic>> _prescriptions = [];
-  
   String _searchQuery = '';
   String _currentFilter = '全部時間';
-  bool _isLoading = true; // 🌟 載入狀態開關
+  bool _isLoading = true; 
 
   @override
   void initState() {
     super.initState();
-    // 頁面一載入，就去跟後端要資料
     _fetchPrescriptions();
   }
 
-  // 🌟 核心 API 串接：取得使用者的藥單列表 (首頁專用，對齊規格書四-1)
   Future<void> _fetchPrescriptions() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('user_id');
-      
       if (userId == null) {
         setState(() => _isLoading = false);
         return;
       }
-
-      final response = await http.get(
-        Uri.parse('$API_BASE_URL/medications/api/prescriptions/$userId/'),
-      );
-      
-      final rawResponse = utf8.decode(response.bodyBytes);
-      final data = json.decode(rawResponse);
-      
+      final response = await http.get(Uri.parse('$API_BASE_URL/medications/api/prescriptions/$userId/'));
+      final data = json.decode(utf8.decode(response.bodyBytes));
       if (response.statusCode == 200 && data['status'] == 'success') {
-        setState(() {
-          _prescriptions = List<Map<String, dynamic>>.from(data['data']);
-        });
+        setState(() => _prescriptions = List<Map<String, dynamic>>.from(data['data']));
       }
     } catch (e) {
       debugPrint('抓取藥單列表錯誤: $e');
@@ -864,67 +851,65 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
     }
   }
 
-  // 🌟 真實 API 串接：手動新增藥單 (完美對齊規格書四-3)
   Future<void> _createManualPrescription(String hospitalName, String visitDate) async {
-    if (hospitalName.trim().isEmpty || visitDate.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('請填寫醫院名稱與看診日期！'), backgroundColor: Colors.orangeAccent)
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true); // 啟動轉圈圈畫面
-
+    if (hospitalName.trim().isEmpty || visitDate.trim().isEmpty) return;
+    setState(() => _isLoading = true); 
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('user_id');
-      
       if (userId == null) return;
-
-      debugPrint('👉 準備發送手動新增藥單請求...');
       final response = await http.post(
         Uri.parse('$API_BASE_URL/medications/api/prescriptions/create/'),
         headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          "user_id": userId,
-          "hospital_name": hospitalName,
-          "visit_date": visitDate
-        }),
+        body: json.encode({"user_id": userId, "hospital_name": hospitalName, "visit_date": visitDate}),
       );
-
-      final rawResponse = utf8.decode(response.bodyBytes);
-      debugPrint('👈 收到手動建立結果: $rawResponse');
-      final data = json.decode(rawResponse);
-
+      final data = json.decode(utf8.decode(response.bodyBytes));
       if ((response.statusCode == 200 || response.statusCode == 201) && data['status'] == 'success') {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('✅ 成功手動建立 「$hospitalName」 藥單！'), backgroundColor: Colors.teal)
-        );
-        _fetchPrescriptions(); // 🌟 重新整理列表，讓手動新增的藥單立刻跑出來！
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('建立失敗：${data['message'] ?? '伺服器拒絕'}'), backgroundColor: Colors.redAccent)
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✅ 成功手動建立 「$hospitalName」 藥單！'), backgroundColor: Colors.teal));
+        _fetchPrescriptions(); 
       }
     } catch (e) {
-      debugPrint('❌ 手動建立藥單致命錯誤: $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('連線失敗：$e'), backgroundColor: Colors.redAccent)
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線失敗：$e'), backgroundColor: Colors.redAccent));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // 🌟 真實 API 串接：手動刪除整張藥單
-  Future<void> _deletePrescription(int prescriptionId, String hospitalName) async {
+  // 🌟 新增：手動更新藥單資訊 API (對齊規格書四-4)
+  Future<void> _updatePrescription(int prescriptionId, String hospitalName, String visitDate) async {
+    if (hospitalName.trim().isEmpty || visitDate.trim().isEmpty) return;
+    setState(() => _isLoading = true); 
     try {
       final response = await http.post(
-        Uri.parse('$API_BASE_URL/medications/api/prescriptions/$prescriptionId/delete/'),
+        Uri.parse('$API_BASE_URL/medications/api/prescriptions/$prescriptionId/update/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          "hospital_name": hospitalName, 
+          "visit_date": visitDate
+        }),
       );
+      final data = json.decode(utf8.decode(response.bodyBytes));
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('📝 藥單資料更新成功！'), backgroundColor: Colors.teal));
+        _fetchPrescriptions(); // 🌟 重新整理列表，顯示修改後的名字
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('更新失敗：${data['message']}'), backgroundColor: Colors.redAccent));
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線失敗：$e'), backgroundColor: Colors.redAccent));
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _deletePrescription(int prescriptionId, String hospitalName) async {
+    try {
+      final response = await http.post(Uri.parse('$API_BASE_URL/medications/api/prescriptions/$prescriptionId/delete/'));
       final data = json.decode(utf8.decode(response.bodyBytes));
       if (response.statusCode == 200 && data['status'] == 'success') {
         if (!mounted) return;
@@ -935,19 +920,102 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
     }
   }
 
-  // 🌟 手動新增藥單彈窗表單
-  void _showAddPrescriptionDialog() {
-    final TextEditingController hospitalCtrl = TextEditingController();
-    final TextEditingController dateCtrl = TextEditingController(
-      text: "${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}"
+  Future<void> _checkAllSafety() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    int? userId = prefs.getInt('user_id');
+    if (userId == null) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator(color: Colors.teal)),
     );
+
+    try {
+      final response = await http.post(
+        Uri.parse('$API_BASE_URL/medications/api/check_all_safety/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({"user_id": userId}),
+      );
+      
+      if (!mounted) return;
+      Navigator.pop(context); 
+
+      final data = json.decode(utf8.decode(response.bodyBytes));
+      
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        List<dynamic> rawList = data['data'] ?? [];
+        List<dynamic> actualDangerList = rawList.where((item) {
+          final warnings = item['warnings'] as List?;
+          return warnings != null && warnings.isNotEmpty;
+        }).toList();
+
+        _showSafetyResultDialog(actualDangerList);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('檢查失敗：${data['message']}'), backgroundColor: Colors.redAccent));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線失敗：$e'), backgroundColor: Colors.redAccent));
+    }
+  }
+
+  void _showSafetyResultDialog(List<dynamic> dangerList) {
+    if (dangerList.isEmpty) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: const Row(children: [Icon(Icons.check_circle, color: Colors.green, size: 30), SizedBox(width: 10), Text('安全過關！')]),
+          content: const Text('太棒了！您目前身上所有的藥單之間沒有發現任何交互作用與過敏風險。請安心服藥！', style: TextStyle(fontSize: 15, height: 1.5)),
+          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('太好了', style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)))],
+        )
+      );
+      return;
+    }
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Row(
-          children: [Icon(Icons.add_box, color: Colors.teal), SizedBox(width: 10), Text('手動新增藥單', style: TextStyle(fontWeight: FontWeight.bold))],
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: const Row(children: [Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 30), SizedBox(width: 10), Expanded(child: Text('發現跨藥單風險！', style: TextStyle(fontSize: 18)))]),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: dangerList.length,
+            itemBuilder: (context, index) {
+              final item = dangerList[index];
+              return Card(
+                color: Colors.red.shade50,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('💊 ${item['raw_name']} (${item['hospital']})', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.redAccent)),
+                      const SizedBox(height: 8),
+                      ...(item['warnings'] as List).map<Widget>((w) => Text('⚠️ 【${w['conflict_target']}】${w['warning_desc']}', style: const TextStyle(fontSize: 13, height: 1.3))).toList()
+                    ],
+                  ),
+                ),
+              );
+            }
+          ),
         ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('我了解了', style: TextStyle(color: Colors.grey)))],
+      )
+    );
+  }
+
+  void _showAddPrescriptionDialog() {
+    final TextEditingController hospitalCtrl = TextEditingController();
+    final TextEditingController dateCtrl = TextEditingController(text: "${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}");
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(children: [Icon(Icons.add_box, color: Colors.teal), SizedBox(width: 10), Text('手動新增藥單', style: TextStyle(fontWeight: FontWeight.bold))]),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -962,8 +1030,7 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
             onPressed: () {
-              Navigator.pop(context); // 關閉彈窗
-              // 💡 呼叫手動建立藥單函式
+              Navigator.pop(context); 
               _createManualPrescription(hospitalCtrl.text, dateCtrl.text);
             },
             child: const Text('建立', style: TextStyle(color: Colors.white)),
@@ -973,20 +1040,47 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
     );
   }
 
+  // 🌟 新增：顯示編輯藥單彈窗
+  void _showEditPrescriptionDialog(Map<String, dynamic> item) {
+    final TextEditingController hospitalCtrl = TextEditingController(text: item['hospital_name']);
+    final TextEditingController dateCtrl = TextEditingController(text: item['visit_date']);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(children: [Icon(Icons.edit_document, color: Colors.orangeAccent), SizedBox(width: 10), Text('編輯藥單資訊', style: TextStyle(fontWeight: FontWeight.bold))]),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: hospitalCtrl, decoration: const InputDecoration(labelText: '醫院/診所名稱')),
+            const SizedBox(height: 10),
+            TextField(controller: dateCtrl, decoration: const InputDecoration(labelText: '看診日期', hintText: '格式：YYYY-MM-DD')),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+            onPressed: () {
+              Navigator.pop(context);
+              _updatePrescription(item['prescription_id'], hospitalCtrl.text, dateCtrl.text);
+            },
+            child: const Text('儲存', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // 進行搜尋與篩選
     List<Map<String, dynamic>> displayedData = _prescriptions.where((item) {
-      final hospitalMatch = item['hospital_name'].toString().contains(_searchQuery);
-      final dateMatch = item['visit_date'].toString().contains(_searchQuery);
-      return hospitalMatch || dateMatch;
+      return item['hospital_name'].toString().contains(_searchQuery) || item['visit_date'].toString().contains(_searchQuery);
     }).toList();
 
-    if (_currentFilter == '最新加入') {
-      displayedData.sort((a, b) => b['visit_date'].compareTo(a['visit_date']));
-    } else if (_currentFilter == '最早加入') {
-      displayedData.sort((a, b) => a['visit_date'].compareTo(b['visit_date']));
-    }
+    if (_currentFilter == '最新加入') displayedData.sort((a, b) => b['visit_date'].compareTo(a['visit_date']));
+    else if (_currentFilter == '最早加入') displayedData.sort((a, b) => a['visit_date'].compareTo(b['visit_date']));
 
     return SafeArea(
       child: Padding(
@@ -1005,7 +1099,22 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
                 ],
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 15),
+
+            SizedBox(
+              width: double.infinity, height: 45,
+              child: ElevatedButton.icon(
+                onPressed: _checkAllSafety,
+                icon: const Icon(Icons.health_and_safety, color: Colors.white),
+                label: const Text('進行總體用藥安全檢查', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
+                ),
+              ),
+            ),
+            const SizedBox(height: 15),
+
             Row(
               children: [
                 Expanded(
@@ -1041,7 +1150,6 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
             ),
             const SizedBox(height: 20),
             
-            // 🌟 藥單列表區塊
             Expanded(
               child: Container(
                 padding: const EdgeInsets.all(12),
@@ -1054,7 +1162,6 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
                       itemCount: displayedData.length,
                       itemBuilder: (context, index) {
                         final item = displayedData[index];
-
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 12),
                           child: Dismissible(
@@ -1068,23 +1175,17 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
                             ),
                             onDismissed: (direction) {
                               _deletePrescription(item['prescription_id'], item['hospital_name']);
-                              setState(() {
-                                _prescriptions.removeWhere((p) => p['prescription_id'] == item['prescription_id']);
-                              });
+                              setState(() { _prescriptions.removeWhere((p) => p['prescription_id'] == item['prescription_id']); });
                             },
                             child: InkWell(
                               onTap: () async {
                                 item['meds'] ??= [];
                                 await Navigator.push(context, MaterialPageRoute(builder: (context) => PrescriptionDetailPage(prescription: item)));
-                                _fetchPrescriptions(); // 從詳細頁回來時重新抓取更新資料
+                                _fetchPrescriptions(); 
                               },
                               child: Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: Colors.teal.shade100, width: 1.0),
-                                ),
+                                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.teal.shade100, width: 1.0)),
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
@@ -1096,7 +1197,16 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
                                         Text('看診日期: ${item['visit_date']}   |   藥品數量: ${item['drug_count'] ?? 0} 種', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
                                       ],
                                     ),
-                                    const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.teal),
+                                    // 🌟 加入編輯按鈕與箭頭
+                                    Row(
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.edit, color: Colors.orangeAccent, size: 20),
+                                          onPressed: () => _showEditPrescriptionDialog(item),
+                                        ),
+                                        const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.teal),
+                                      ],
+                                    ),
                                   ],
                                 ),
                               ),
@@ -1502,18 +1612,119 @@ class ReminderSettingsPage extends StatefulWidget {
 }
 
 class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
-  String _selectedFrequency = '一天三次';
-  final List<String> _frequencies = ['一天三次', '一天兩次', '一天一次'];
+  bool _isPrescriptionsLoading = true;
+  bool _isDrugsLoading = false;
+  List<dynamic> _prescriptions = [];
+  
+  // 💡 修正 1：下拉選單改為只綁定藥單 ID，避免 Flutter 報錯
+  int? _selectedPrescriptionId; 
+  
+  List<dynamic> _drugs = [];
 
-  List<Map<String, dynamic>> allMeds = [
-    {'name': '普拿疼', 'hospital': '北商大聯合診所', 'freq': '一天三次', 'times': ['08:00', '12:00', '18:00']},
-    {'name': '胃乳', 'hospital': '北商大聯合診所', 'freq': '一天三次', 'times': ['08:30', '12:30', '18:30']},
-    {'name': '抗組織胺', 'hospital': '家醫科診所', 'freq': '一天兩次', 'times': ['09:00', '21:00']},
-    {'name': '阿斯匹靈', 'hospital': '新竹台大醫院', 'freq': '一天一次', 'times': ['21:00']},
-  ];
+  // 🌟 核心資料結構：將藥品依照「頻率」分類群組
+  Map<String, List<dynamic>> _groupedDrugs = {};
+  Map<String, List<String>> _groupTimes = {};
+  Map<String, List<String>> _groupTags = {};
 
-  void _showTimePicker(Map<String, dynamic> med, int timeIndex) {
-    final timeParts = med['times'][timeIndex].split(':');
+  @override
+  void initState() {
+    super.initState();
+    _fetchUserPrescriptions(); // 頁面載入時先抓取該用戶的所有藥單
+  }
+
+  // 🌟 1. 獲取使用者藥單清單 (用來塞下拉選單)
+  Future<void> _fetchUserPrescriptions() async {
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      int? userId = prefs.getInt('user_id');
+      if (userId == null) {
+        setState(() => _isPrescriptionsLoading = false);
+        return;
+      }
+
+      final response = await http.get(
+        Uri.parse('$API_BASE_URL/medications/api/prescriptions/$userId/'),
+      );
+      final data = json.decode(utf8.decode(response.bodyBytes));
+
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        setState(() {
+          _prescriptions = data['data'] ?? [];
+          _isPrescriptionsLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('鬧鐘頁面獲取藥單失敗: $e');
+      setState(() => _isPrescriptionsLoading = false);
+    }
+  }
+
+  // 🌟 2. 當選取某張藥單時，獲取其底下的所有藥品明細
+  Future<void> _fetchDrugsForPrescription(int prescriptionId) async {
+    setState(() {
+      _isDrugsLoading = true;
+      _drugs = [];
+      _groupedDrugs = {};
+    });
+
+    try {
+      final response = await http.get(
+        Uri.parse('$API_BASE_URL/medications/api/prescription_details/$prescriptionId/'),
+      );
+      final data = json.decode(utf8.decode(response.bodyBytes));
+
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        _drugs = data['data'] ?? [];
+        _groupDrugsByFrequency(); // 執行自動分群演算法
+      }
+    } catch (e) {
+      debugPrint('獲取藥品明細失敗: $e');
+    } finally {
+      setState(() => _isDrugsLoading = false);
+    }
+  }
+
+  // 🌟 3. 核心演算法：依照藥品服用頻率自動分群，並初始化預設 Tag 與時間 
+  void _groupDrugsByFrequency() {
+    _groupedDrugs.clear();
+    _groupTimes.clear();
+    _groupTags.clear();
+
+    for (var drug in _drugs) {
+      String freq = drug['frequency'] ?? '每日一次';
+      if (!_groupedDrugs.containsKey(freq)) {
+        _groupedDrugs[freq] = [];
+      }
+      _groupedDrugs[freq]!.add(drug);
+    }
+
+    _groupedDrugs.forEach((freq, drugList) {
+      List<String> tags = [];
+      List<String> times = [];
+
+      if (freq.contains('三') || freq.contains('3') || freq.toLowerCase().contains('tid')) {
+        tags = ['早餐後', '午餐後', '晚餐後'];
+        times = ['08:30', '12:30', '18:30'];
+      } else if (freq.contains('二') || freq.contains('2') || freq.toLowerCase().contains('bid')) {
+        tags = ['早餐後', '晚餐後'];
+        times = ['08:30', '18:30'];
+      } else if (freq.contains('睡前') || freq.toLowerCase().contains('hs')) {
+        tags = ['睡前'];
+        times = ['21:30'];
+      } else {
+        tags = ['隨餐'];
+        times = ['08:30'];
+      }
+
+      _groupTags[freq] = tags;
+      _groupTimes[freq] = times;
+    });
+  }
+
+  // 🌟 4. 時間選擇器彈窗
+  void _showGroupTimePicker(String freq, int timeIndex) {
+    final currentTimes = _groupTimes[freq] ?? ['08:30'];
+    final timeParts = currentTimes[timeIndex].split(':');
     final initialDateTime = DateTime(2026, 1, 1, int.parse(timeParts[0]), int.parse(timeParts[1]));
     
     showDialog(
@@ -1527,7 +1738,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
               children: [
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 10), 
-                  child: Text('設置 ${med['name']} - 第 ${timeIndex + 1} 劑', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.teal))
+                  child: Text('設定【$freq】的第 ${timeIndex + 1} 劑時間', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal))
                 ),
                 const Divider(),
                 Expanded(
@@ -1537,7 +1748,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
                     use24hFormat: true, 
                     onDateTimeChanged: (DateTime newDate) { 
                       setState(() { 
-                        med['times'][timeIndex] = "${newDate.hour.toString().padLeft(2, '0')}:${newDate.minute.toString().padLeft(2, '0')}"; 
+                        _groupTimes[freq]![timeIndex] = "${newDate.hour.toString().padLeft(2, '0')}:${newDate.minute.toString().padLeft(2, '0')}"; 
                       }); 
                     },
                   )
@@ -1563,220 +1774,197 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
     );
   }
 
-  void _showMenu(Map<String, dynamic> med) {
-    List<String> times = med['times'];
-    if (times.length == 1) {
-      _showTimePicker(med, 0);
-      return;
-    }
+  // 🌟 5. 將分群結構轉回以「藥品」為單位的 API Payload 並上傳 [cite: 4]
+  Future<void> _saveReminders() async {
+    if (_selectedPrescriptionId == null || _drugs.isEmpty) return;
 
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('設定 ${med['name']} 提醒時間', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)), 
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        content: SizedBox(
-          width: double.maxFinite, 
-          child: Column(
-            mainAxisSize: MainAxisSize.min, 
-            children: List.generate(times.length, (i) => ListTile(
-              leading: const Icon(Icons.access_time, color: Colors.teal), 
-              title: Text('第 ${i + 1} 劑 (${times[i]})', style: const TextStyle(fontWeight: FontWeight.bold)), 
-              trailing: const Icon(Icons.edit, size: 18, color: Colors.grey),
-              onTap: () { 
-                Navigator.pop(context); 
-                _showTimePicker(med, i); 
-              }
-            ))
-          )
-        ),
-      ),
-    );
+    final pid = _selectedPrescriptionId;
+    List<Map<String, dynamic>> drugsPayload = [];
+
+    _groupedDrugs.forEach((freq, drugList) {
+      final tags = _groupTags[freq] ?? [];
+      final times = _groupTimes[freq] ?? [];
+
+      for (var drug in drugList) {
+        final drugId = drug['id']; 
+        if (drugId == null) continue;
+
+        List<Map<String, String>> remindersList = [];
+        for (int i = 0; i < tags.length; i++) {
+          remindersList.add({
+            "frequency_tag": tags[i],
+            "remind_time": "${times[i]}:00" 
+          });
+        }
+
+        drugsPayload.add({
+          "prescription_drug_id": drugId,
+          "reminders": remindersList
+        });
+      }
+    });
+
+    final payload = {
+      "prescription_id": pid,
+      "drugs": drugsPayload
+    };
+
+    try {
+      debugPrint('👉 準備發送鬧鐘批次設定：${json.encode(payload)}');
+      final response = await http.post(
+        Uri.parse('$API_BASE_URL/medications/api/reminders/set/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode(payload),
+      );
+
+      final data = json.decode(utf8.decode(response.bodyBytes));
+// 💡 修正：把 201 (Created) 也加入成功的判斷條件中
+      if ((response.statusCode == 200 || response.statusCode == 201) && data['status'] == 'success') {        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('🎉 ${data['message'] ?? "已成功同步雲端鬧鐘！"}'), backgroundColor: Colors.teal)
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('設定失敗：${data['message']}'), backgroundColor: Colors.redAccent)
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線失敗：$e'), backgroundColor: Colors.redAccent));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    List<Map<String, dynamic>> displayedMeds = allMeds.where((m) => m['freq'] == _selectedFrequency).toList();
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7F9),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: _isPrescriptionsLoading
+              ? const Center(child: CircularProgressIndicator(color: Colors.teal))
+              : Column(
+                  children: [
+                    // 標題卡片
+                    Container(
+                      width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 20),
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), spreadRadius: 1, blurRadius: 5)]),
+                      child: const Center(child: Text('吃藥提醒鬧鐘 ⏰', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.teal))),
+                    ),
+                    const SizedBox(height: 15),
 
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0), 
-        child: Column(
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 25),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(15),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.1),
-                    spreadRadius: 1,
-                    blurRadius: 5,
-                    offset: const Offset(0, 2),
-                  )
-                ],
-              ),
-              child: const Center(
-                child: Text(
-                  '食用頻率設定', 
-                  style: TextStyle(
-                    fontSize: 28, 
-                    fontWeight: FontWeight.bold, 
-                    color: Colors.teal,
-                    letterSpacing: 1.5,
-                  )
-                ),
-              ),
-            ),
-            
-            const SizedBox(height: 20),
+                    // 💡 修正 2：下拉選單的 value 改綁定整數 ID
+                    DropdownButtonFormField<int>(
+                      decoration: InputDecoration(
+                        labelText: '選擇要設定的藥單紀錄',
+                        filled: true, fillColor: Colors.white,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      value: _selectedPrescriptionId,
+                      items: _prescriptions.map<DropdownMenuItem<int>>((p) {
+                        return DropdownMenuItem<int>(
+                          value: p['prescription_id'] as int,
+                          child: Text('${p['hospital_name']} (${p['visit_date']})'),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        setState(() {
+                          _selectedPrescriptionId = val;
+                          if (val != null) _fetchDrugsForPrescription(val);
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 15),
 
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: _frequencies.map<Widget>((freq) {
-                bool isSelected = _selectedFrequency == freq;
-                return Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                    child: InkWell(
-                      onTap: () => setState(() => _selectedFrequency = freq),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        decoration: BoxDecoration(
-                          color: isSelected ? Colors.teal : Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: isSelected ? Colors.teal : Colors.grey.shade300),
-                          boxShadow: isSelected ? [BoxShadow(color: Colors.teal.withOpacity(0.3), blurRadius: 6, offset: const Offset(0, 3))] : [],
-                        ),
-                        child: Center(
-                          child: Text(
-                            freq, 
-                            style: TextStyle(
-                              color: isSelected ? Colors.white : Colors.grey.shade600, 
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14
-                            )
+                    // 下半部動態分群清單
+                    Expanded(
+                      child: _isDrugsLoading
+                          ? const Center(child: CircularProgressIndicator(color: Colors.teal))
+                          : _selectedPrescriptionId == null
+                              ? const Center(child: Text('請先在上方選擇一張藥單', style: TextStyle(color: Colors.grey)))
+                              : _groupedDrugs.isEmpty
+                                  ? const Center(child: Text('此藥單內目前沒有任何藥品明細', style: TextStyle(color: Colors.grey)))
+                                  : ListView(
+                                      children: _groupedDrugs.keys.map((freq) {
+                                        final drugList = _groupedDrugs[freq]!;
+                                        final tags = _groupTags[freq] ?? [];
+                                        final times = _groupTimes[freq] ?? [];
+
+                                        return Card(
+                                          elevation: 2, margin: const EdgeInsets.only(bottom: 16),
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(16.0),
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Row(
+                                                  children: [
+                                                    const Icon(Icons.alarm_add, color: Colors.teal),
+                                                    const SizedBox(width: 8),
+                                                    Text('服用頻率：$freq', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.teal)),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Text('包含藥品：${drugList.map((d) => d['raw_name']).join('、 ')}', style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
+                                                const SizedBox(height: 15),
+                                                const Divider(),
+                                                const SizedBox(height: 10),
+                                                
+                                                Wrap(
+                                                  spacing: 10, runSpacing: 10,
+                                                  children: List.generate(tags.length, (timeIdx) {
+                                                    return InkWell(
+                                                      onTap: () => _showGroupTimePicker(freq, timeIdx),
+                                                      child: Container(
+                                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                                        decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.teal.shade200)),
+                                                        child: Row(
+                                                          mainAxisSize: MainAxisSize.min,
+                                                          children: [
+                                                            Text('${tags[timeIdx]}：', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.teal)),
+                                                            Text(times[timeIdx], style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.teal)),
+                                                            const SizedBox(width: 4),
+                                                            const Icon(Icons.edit, size: 14, color: Colors.teal),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                    );
+                                                  }),
+                                                )
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
+                    ),
+                    
+                    // 💡 修正 3：按鈕語法修復
+                    if (_selectedPrescriptionId != null && _groupedDrugs.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10),
+                        child: SizedBox(
+                          width: double.infinity, height: 50,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.teal, 
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            onPressed: _saveReminders,
+                            child: const Text('儲存提醒鬧鐘設定', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
                           ),
                         ),
-                      ),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
-            
-            const SizedBox(height: 20),
-
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(15),
-                  boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), spreadRadius: 1, blurRadius: 5)],
+                      )
+                  ],
                 ),
-                child: displayedMeds.isEmpty 
-                ? Center(child: Text('目前沒有「$_selectedFrequency」的藥品', style: const TextStyle(color: Colors.grey)))
-                : ListView.builder(
-                  itemCount: displayedMeds.length,
-                  itemBuilder: (context, index) {
-                    final med = displayedMeds[index];
-                    return _buildMedCard(med);
-                  },
-                ),
-              ),
-            ),
-          ],
         ),
       ),
     );
   }
-
-  Widget _buildMedCard(Map<String, dynamic> med) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Stack(
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text(med['name'], style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
-                  const SizedBox(width: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.teal.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(med['hospital'], style: const TextStyle(fontSize: 12, color: Colors.teal, fontWeight: FontWeight.bold)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 15),
-              
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: List.generate(med['times'].length, (timeIndex) {
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.teal.shade200),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.alarm, size: 14, color: Colors.teal),
-                        const SizedBox(width: 4),
-                        Text(med['times'][timeIndex], style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.teal)),
-                      ],
-                    ),
-                  );
-                }),
-              ),
-            ],
-          ),
-          
-          Positioned(
-            right: 0,
-            top: 0,
-            child: InkWell(
-              onTap: () => _showMenu(med),
-              child: Container(
-                width: 35,
-                height: 35,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.grey.shade300),
-                  boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.2), blurRadius: 4)],
-                ),
-                child: const Center(
-                  child: Icon(Icons.settings, size: 18, color: Colors.grey),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
-
-// ==========================================
 // 🌟 真實 API 串接版：個人資料頁面
 // ==========================================
 class UserProfilePage extends StatefulWidget {
@@ -1796,51 +1984,117 @@ class _UserProfilePageState extends State<UserProfilePage> {
     _fetchUserProfile();
   }
 
-  // 🌟 核心 API 串接：讀取個人資料 (對齊規格書一-3)
   Future<void> _fetchUserProfile() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('user_id');
-
       if (userId == null) {
         setState(() => _isLoading = false);
         return;
       }
-
-      debugPrint('👉 準備獲取使用者資料，ID: $userId');
       final response = await http.post(
-        Uri.parse('$API_BASE_URL/accounts/api/profile/'),
+        Uri.parse('$API_BASE_URL/accounts/api/user/profile/'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({"user_id": userId}),
       );
-
       final rawResponse = utf8.decode(response.bodyBytes);
       final data = json.decode(rawResponse);
-
       if (response.statusCode == 200 && data['status'] == 'success') {
         setState(() {
           _profileData = data['data'];
           _isLoading = false;
         });
-        debugPrint('✅ 成功抓取個人資料！');
       } else {
-        debugPrint('❌ 抓取資料失敗: ${data['message']}');
         setState(() => _isLoading = false);
       }
     } catch (e) {
-      debugPrint('連線錯誤: $e');
       setState(() => _isLoading = false);
     }
   }
 
+  // 🌟 新增：更新個人資料 API (規格書一-4)
+  Future<void> _updateProfile(String n, String h, String w, String a, String p) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    int? userId = prefs.getInt('user_id');
+    if (userId == null) return;
+    
+    setState(() => _isLoading = true);
+
+    try {
+      final response = await http.post(
+        Uri.parse('$API_BASE_URL/accounts/api/user/update/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          "user_id": userId,
+          "nickname": n.isEmpty ? _profileData['nickname'] : n,
+          "height": double.tryParse(h) ?? _profileData['height'],
+          "weight": double.tryParse(w) ?? _profileData['weight'],
+          "allergies": a.isEmpty ? "無" : a,
+          "emergency_contact_phone": p.isEmpty ? _profileData['emergency_contact_phone'] : p
+        }),
+      );
+      
+      final data = json.decode(utf8.decode(response.bodyBytes));
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ 個人資料更新成功！'), backgroundColor: Colors.teal));
+        _fetchUserProfile(); // 重新抓取更新後的資料
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('更新失敗：${data['message']}'), backgroundColor: Colors.redAccent));
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線失敗：$e'), backgroundColor: Colors.redAccent));
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // 🌟 新增：顯示編輯資料彈窗
+  void _showEditProfileDialog() {
+    final TextEditingController nickCtrl = TextEditingController(text: _profileData['nickname']);
+    final TextEditingController heightCtrl = TextEditingController(text: _profileData['height']?.toString());
+    final TextEditingController weightCtrl = TextEditingController(text: _profileData['weight']?.toString());
+    final TextEditingController allergiesCtrl = TextEditingController(text: _profileData['allergies']);
+    final TextEditingController phoneCtrl = TextEditingController(text: _profileData['emergency_contact_phone']);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: const Row(children: [Icon(Icons.edit, color: Colors.teal), SizedBox(width: 10), Text('修改健康資料', style: TextStyle(fontWeight: FontWeight.bold))]),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: nickCtrl, decoration: const InputDecoration(labelText: '暱稱 (顯示於首頁)')),
+              TextField(controller: heightCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '身高 (cm)')),
+              TextField(controller: weightCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '體重 (kg)')),
+              TextField(controller: allergiesCtrl, decoration: const InputDecoration(labelText: '藥物過敏史', hintText: '若無請填無')),
+              TextField(controller: phoneCtrl, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: '緊急聯絡電話')),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+            onPressed: () {
+              Navigator.pop(context);
+              _updateProfile(nickCtrl.text, heightCtrl.text, weightCtrl.text, allergiesCtrl.text, phoneCtrl.text);
+            },
+            child: const Text('儲存變更', style: TextStyle(color: Colors.white)),
+          )
+        ],
+      )
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // 如果還在讀取中，顯示轉圈圈
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator(color: Colors.teal));
-    }
+    if (_isLoading) return const Center(child: CircularProgressIndicator(color: Colors.teal));
 
-    // 🌟 把後端回傳的資料轉成變數，若無資料則顯示預設文字
     final nickname = _profileData['nickname'] ?? '未知用戶';
     final userName = _profileData['user_name'] ?? '無帳號';
     final allergies = _profileData['allergies'] ?? '無';
@@ -1858,12 +2112,19 @@ class _UserProfilePageState extends State<UserProfilePage> {
               const SizedBox(height: 10),
               Text(nickname, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
               Text('帳號: $userName', style: const TextStyle(color: Colors.grey)),
+              const SizedBox(height: 10),
+              // 🌟 加入編輯按鈕
+              OutlinedButton.icon(
+                onPressed: _showEditProfileDialog, 
+                icon: const Icon(Icons.edit, size: 16), 
+                label: const Text('編輯資料'),
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.teal, side: const BorderSide(color: Colors.teal), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
+              )
             ],
           ),
         ),
-        const SizedBox(height: 30),
+        const SizedBox(height: 20),
         _buildSectionTitle('核心健康資訊'),
-        // 💡 如果過敏史不是「無」，就亮紅燈警告！
         _buildInfoCard(
           Icons.warning_amber_rounded, 
           '藥物過敏史', 
@@ -1880,16 +2141,12 @@ class _UserProfilePageState extends State<UserProfilePage> {
   }
 
   Widget _buildSectionTitle(String title) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal)),
-    );
+    return Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal)));
   }
 
   Widget _buildInfoCard(IconData icon, String title, String value, Color color) {
     return Card(
-      elevation: 2,
-      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 2, margin: const EdgeInsets.only(bottom: 10),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
         leading: Icon(icon, color: color),
