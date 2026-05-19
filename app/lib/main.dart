@@ -834,38 +834,31 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
     _fetchPrescriptions();
   }
 
-  // 🌟 核心 API 串接：取得使用者的藥單列表
+  // 🌟 核心 API 串接：取得使用者的藥單列表 (首頁專用，對齊規格書四-1)
   Future<void> _fetchPrescriptions() async {
-    setState(() => _isLoading = true);
     try {
-      // 1. 從手機記憶體拿出剛剛登入存的 user_id
       SharedPreferences prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('user_id');
-
+      
       if (userId == null) {
-        debugPrint('找不到 user_id，請重新登入');
+        setState(() => _isLoading = false);
         return;
       }
 
-      // 2. 去敲後端的門 (GET 請求)
       final response = await http.get(
         Uri.parse('$API_BASE_URL/medications/api/prescriptions/$userId/'),
       );
-
-      // 使用 utf8.decode 確保中文不會變成亂碼
-      final data = json.decode(utf8.decode(response.bodyBytes));
-
+      
+      final rawResponse = utf8.decode(response.bodyBytes);
+      final data = json.decode(rawResponse);
+      
       if (response.statusCode == 200 && data['status'] == 'success') {
         setState(() {
-          // 將後端給的資料存進我們的陣列裡
           _prescriptions = List<Map<String, dynamic>>.from(data['data']);
         });
-        debugPrint('✅ 成功抓取 ${_prescriptions.length} 筆藥單資料！');
-      } else {
-        debugPrint('抓取失敗: ${data['message']}');
       }
     } catch (e) {
-      debugPrint('抓取藥單發生錯誤: $e');
+      debugPrint('抓取藥單列表錯誤: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -887,7 +880,7 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
     }
   }
 
-  // 🌟 手動新增藥單彈窗表單 (保留先前的結構，之後可以串接)
+  // 🌟 手動新增藥單彈窗表單 (保留先前的結構)
   void _showAddPrescriptionDialog() {
     final TextEditingController hospitalCtrl = TextEditingController();
     final TextEditingController dateCtrl = TextEditingController(
@@ -914,7 +907,6 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
             onPressed: () {
-              // TODO: 未來這裡可以串接新增藥單的 API
               Navigator.pop(context);
             },
             child: const Text('建立', style: TextStyle(color: Colors.white)),
@@ -998,7 +990,7 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.grey.shade200)),
                 child: _isLoading 
-                ? const Center(child: CircularProgressIndicator(color: Colors.teal)) // 正在載入時轉圈圈
+                ? const Center(child: CircularProgressIndicator(color: Colors.teal)) 
                 : displayedData.isEmpty 
                   ? const Center(child: Text('目前沒有任何藥單紀錄', style: TextStyle(color: Colors.grey)))
                   : ListView.builder(
@@ -1025,7 +1017,6 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
                             },
                             child: InkWell(
                               onTap: () async {
-                                // 🌟 防呆：避免舊版詳細頁面找不到 meds 陣列而閃退
                                 item['meds'] ??= [];
                                 await Navigator.push(context, MaterialPageRoute(builder: (context) => PrescriptionDetailPage(prescription: item)));
                                 _fetchPrescriptions(); // 從詳細頁回來時重新抓取更新資料
@@ -1069,9 +1060,6 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
 // ==========================================
 // 🌟 真實功能+用藥安全紅綠燈版：【個別藥單詳細頁面】
 // ==========================================
-// ==========================================
-// 🌟 真實功能+用藥安全紅綠燈版：【個別藥單詳細頁面】
-// ==========================================
 class PrescriptionDetailPage extends StatefulWidget {
   final Map<String, dynamic> prescription;
   const PrescriptionDetailPage({super.key, required this.prescription});
@@ -1090,8 +1078,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
     _fetchPrescriptionDetails(); // 一進畫面就去抓資料
   }
 
-  // 🌟 核心 API 串接：取得單一藥單的所有藥品明細
-// 🌟 核心 API 串接：取得單一藥單的所有藥品明細
+  // 🌟 核心 API 串接：取得特定藥單的詳情 (詳細頁面專用，對齊規格書四-2)
   Future<void> _fetchPrescriptionDetails() async {
     final pid = widget.prescription['prescription_id'];
     if (pid == null) {
@@ -1101,11 +1088,11 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
 
     try {
       debugPrint('👉 準備獲取藥單明細，ID: $pid');
+      // 💡 修正點：API 路徑完美改為對齊規格書的 prescription_details/ 門牌號碼
       final response = await http.get(
-        Uri.parse('$API_BASE_URL/medications/api/prescriptions/$pid/'),
+        Uri.parse('$API_BASE_URL/medications/api/prescription_details/$pid/'),
       );
 
-      // 🚨 終極抓蟲神器：把後端回傳的原始字串，原汁原味印出來！
       final rawResponse = utf8.decode(response.bodyBytes);
       debugPrint('🚨 後端真實回傳: $rawResponse');
 
@@ -1113,11 +1100,11 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
 
       if (response.statusCode == 200 && data['status'] == 'success') {
         setState(() {
+          // 對齊規格書：後端的 data 本身就是一個藥品陣列，如果不是則去抓對應欄位
           if (data['data'] is List) {
             _meds = List<dynamic>.from(data['data']); 
           } else {
-            // 我多加了 confirmed_drugs 和 prescription_drugs 來猜猜看
-            _meds = data['data']['medications'] ?? data['data']['drugs'] ?? data['data']['meds'] ?? data['data']['confirmed_drugs'] ?? data['data']['prescription_drugs'] ?? [];
+            _meds = data['data']['medications'] ?? data['data']['drugs'] ?? data['data']['meds'] ?? [];
           }
           
           _hasSevereDanger = _meds.any((m) => m['is_severe_danger'] == true);
@@ -1182,7 +1169,6 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
               onPressed: () {
-                // TODO: 這裡未來可以串接「新增單筆藥品」的 API
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('這項功能準備中！'), backgroundColor: Colors.teal));
               },
@@ -1291,7 +1277,6 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                       child: const Icon(Icons.delete_forever, color: Colors.white, size: 28),
                                     ),
                                     onDismissed: (direction) {
-                                      // TODO: 串接刪除單一藥品 API
                                       setState(() { _meds.removeAt(index); });
                                     },
                                     child: Container(
@@ -1320,7 +1305,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                                         med['raw_name'] ?? '未知藥品', 
                                                         style: TextStyle(
                                                           fontSize: 18, 
-                                                          fontWeight: isDanger ? FontWeight.bold : FontWeight.bold, 
+                                                          fontWeight: FontWeight.bold, 
                                                           color: isDanger ? Colors.redAccent : Colors.black87 
                                                         )
                                                       ),
