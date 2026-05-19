@@ -1,6 +1,7 @@
 from django.urls import path
 from . import views
 from . import reminders
+from . import history
 
 urlpatterns = [
     # 辨識藥單 
@@ -35,4 +36,7 @@ urlpatterns = [
 
     # 設定吃藥提醒的 
     path('api/reminders/set/', reminders.set_medication_reminder, name='set_reminder'),
+
+    # 吃藥紀錄回報 
+    path('api/history/record/', history.record_taking_status, name='record_taking_status'),
 ]
