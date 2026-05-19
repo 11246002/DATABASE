@@ -1776,35 +1776,105 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
   }
 }
 
-class UserProfilePage extends StatelessWidget {
+// ==========================================
+// 🌟 真實 API 串接版：個人資料頁面
+// ==========================================
+class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key});
 
   @override
+  State<UserProfilePage> createState() => _UserProfilePageState();
+}
+
+class _UserProfilePageState extends State<UserProfilePage> {
+  bool _isLoading = true;
+  Map<String, dynamic> _profileData = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUserProfile();
+  }
+
+  // 🌟 核心 API 串接：讀取個人資料 (對齊規格書一-3)
+  Future<void> _fetchUserProfile() async {
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      int? userId = prefs.getInt('user_id');
+
+      if (userId == null) {
+        setState(() => _isLoading = false);
+        return;
+      }
+
+      debugPrint('👉 準備獲取使用者資料，ID: $userId');
+      final response = await http.post(
+        Uri.parse('$API_BASE_URL/accounts/api/profile/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({"user_id": userId}),
+      );
+
+      final rawResponse = utf8.decode(response.bodyBytes);
+      final data = json.decode(rawResponse);
+
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        setState(() {
+          _profileData = data['data'];
+          _isLoading = false;
+        });
+        debugPrint('✅ 成功抓取個人資料！');
+      } else {
+        debugPrint('❌ 抓取資料失敗: ${data['message']}');
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      debugPrint('連線錯誤: $e');
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // 如果還在讀取中，顯示轉圈圈
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator(color: Colors.teal));
+    }
+
+    // 🌟 把後端回傳的資料轉成變數，若無資料則顯示預設文字
+    final nickname = _profileData['nickname'] ?? '未知用戶';
+    final userName = _profileData['user_name'] ?? '無帳號';
+    final allergies = _profileData['allergies'] ?? '無';
+    final height = _profileData['height']?.toString() ?? '未知';
+    final weight = _profileData['weight']?.toString() ?? '未知';
+    final emergencyPhone = _profileData['emergency_contact_phone'] ?? '未設定';
+
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const Center(
+        Center(
           child: Column(
             children: [
-              CircleAvatar(radius: 50, backgroundColor: Colors.teal, child: Icon(Icons.person, size: 50, color: Colors.white)),
-              SizedBox(height: 10),
-              Text('王小明', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              Text('ID: NTUB_MIS_2026', style: TextStyle(color: Colors.grey)),
+              const CircleAvatar(radius: 50, backgroundColor: Colors.teal, child: Icon(Icons.person, size: 50, color: Colors.white)),
+              const SizedBox(height: 10),
+              Text(nickname, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              Text('帳號: $userName', style: const TextStyle(color: Colors.grey)),
             ],
           ),
         ),
         const SizedBox(height: 30),
         _buildSectionTitle('核心健康資訊'),
-        _buildInfoCard(Icons.warning_amber_rounded, '藥物過敏史', '對「青黴素、阿斯匹靈」過敏', Colors.redAccent),
-        _buildInfoCard(Icons.monitor_weight_outlined, '身體數值', '身高: 175cm / 體重: 70kg', Colors.blue),
-        const SizedBox(height: 20),
-        _buildSectionTitle('生活作息設定'),
-        _buildInfoCard(Icons.wb_sunny_outlined, '早餐作息', '08:30 AM', Colors.orange),
-        _buildInfoCard(Icons.wb_twilight, '晚餐作息', '18:30 PM', Colors.indigo),
+        // 💡 如果過敏史不是「無」，就亮紅燈警告！
+        _buildInfoCard(
+          Icons.warning_amber_rounded, 
+          '藥物過敏史', 
+          allergies, 
+          (allergies == '無' || allergies == '無過敏') ? Colors.green : Colors.redAccent
+        ),
+        _buildInfoCard(Icons.monitor_weight_outlined, '身體數值', '身高: ${height}cm / 體重: ${weight}kg', Colors.blue),
+        
         const SizedBox(height: 20),
         _buildSectionTitle('緊急聯絡人'),
-        _buildInfoCard(Icons.contact_phone, '緊急聯絡人 (家屬)', '0912-345-678', Colors.teal),
+        _buildInfoCard(Icons.contact_phone, '緊急聯絡人 (家屬)', emergencyPhone, Colors.teal),
       ],
     );
   }
@@ -1825,13 +1895,10 @@ class UserProfilePage extends StatelessWidget {
         leading: Icon(icon, color: color),
         title: Text(title, style: const TextStyle(fontSize: 14, color: Colors.grey)),
         subtitle: Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        trailing: const Icon(Icons.chevron_right, size: 20),
-        onTap: () {},
       ),
     );
   }
 }
-
 class AppSettingsPage extends StatefulWidget {
   const AppSettingsPage({super.key});
   @override
