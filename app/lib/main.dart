@@ -864,6 +864,61 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
     }
   }
 
+  // 🌟 真實 API 串接：手動新增藥單 (完美對齊規格書四-3)
+  Future<void> _createManualPrescription(String hospitalName, String visitDate) async {
+    if (hospitalName.trim().isEmpty || visitDate.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('請填寫醫院名稱與看診日期！'), backgroundColor: Colors.orangeAccent)
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true); // 啟動轉圈圈畫面
+
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      int? userId = prefs.getInt('user_id');
+      
+      if (userId == null) return;
+
+      debugPrint('👉 準備發送手動新增藥單請求...');
+      final response = await http.post(
+        Uri.parse('$API_BASE_URL/medications/api/prescriptions/create/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          "user_id": userId,
+          "hospital_name": hospitalName,
+          "visit_date": visitDate
+        }),
+      );
+
+      final rawResponse = utf8.decode(response.bodyBytes);
+      debugPrint('👈 收到手動建立結果: $rawResponse');
+      final data = json.decode(rawResponse);
+
+      if ((response.statusCode == 200 || response.statusCode == 201) && data['status'] == 'success') {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('✅ 成功手動建立 「$hospitalName」 藥單！'), backgroundColor: Colors.teal)
+        );
+        _fetchPrescriptions(); // 🌟 重新整理列表，讓手動新增的藥單立刻跑出來！
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('建立失敗：${data['message'] ?? '伺服器拒絕'}'), backgroundColor: Colors.redAccent)
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ 手動建立藥單致命錯誤: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('連線失敗：$e'), backgroundColor: Colors.redAccent)
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   // 🌟 真實 API 串接：手動刪除整張藥單
   Future<void> _deletePrescription(int prescriptionId, String hospitalName) async {
     try {
@@ -880,7 +935,7 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
     }
   }
 
-  // 🌟 手動新增藥單彈窗表單 (保留先前的結構)
+  // 🌟 手動新增藥單彈窗表單
   void _showAddPrescriptionDialog() {
     final TextEditingController hospitalCtrl = TextEditingController();
     final TextEditingController dateCtrl = TextEditingController(
@@ -907,7 +962,9 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
             onPressed: () {
-              Navigator.pop(context);
+              Navigator.pop(context); // 關閉彈窗
+              // 💡 呼叫手動建立藥單函式
+              _createManualPrescription(hospitalCtrl.text, dateCtrl.text);
             },
             child: const Text('建立', style: TextStyle(color: Colors.white)),
           ),
@@ -1056,7 +1113,9 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
     );
   }
 }
-
+// ==========================================
+// 🌟 真實功能+用藥安全紅綠燈版：【個別藥單詳細頁面】
+// ==========================================
 // ==========================================
 // 🌟 真實功能+用藥安全紅綠燈版：【個別藥單詳細頁面】
 // ==========================================
@@ -1078,7 +1137,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
     _fetchPrescriptionDetails(); // 一進畫面就去抓資料
   }
 
-  // 🌟 核心 API 串接：取得特定藥單的詳情 (詳細頁面專用，對齊規格書四-2)
+  // 🌟 核心 API 串接：取得特定藥單的詳情 
   Future<void> _fetchPrescriptionDetails() async {
     final pid = widget.prescription['prescription_id'];
     if (pid == null) {
@@ -1088,19 +1147,15 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
 
     try {
       debugPrint('👉 準備獲取藥單明細，ID: $pid');
-      // 💡 修正點：API 路徑完美改為對齊規格書的 prescription_details/ 門牌號碼
       final response = await http.get(
         Uri.parse('$API_BASE_URL/medications/api/prescription_details/$pid/'),
       );
 
       final rawResponse = utf8.decode(response.bodyBytes);
-      debugPrint('🚨 後端真實回傳: $rawResponse');
-
       final data = json.decode(rawResponse);
 
       if (response.statusCode == 200 && data['status'] == 'success') {
         setState(() {
-          // 對齊規格書：後端的 data 本身就是一個藥品陣列，如果不是則去抓對應欄位
           if (data['data'] is List) {
             _meds = List<dynamic>.from(data['data']); 
           } else {
@@ -1109,9 +1164,6 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
           
           _hasSevereDanger = _meds.any((m) => m['is_severe_danger'] == true);
         });
-        debugPrint('✅ 成功抓取 ${_meds.length} 筆藥品明細！');
-      } else {
-        debugPrint('抓取明細失敗: ${data['message']}');
       }
     } catch (e) {
       debugPrint('連線錯誤: $e');
@@ -1120,62 +1172,114 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
     }
   }
 
+  // 🌟 核心 API 串接：手動新增單筆藥品
+  Future<void> _addSingleDrug(String rawName, String frequency, String days, String totalAmount) async {
+    final pid = widget.prescription['prescription_id'];
+    if (pid == null) return;
+
+    if (rawName.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('請輸入藥品名稱！'), backgroundColor: Colors.orangeAccent));
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final response = await http.post(
+        Uri.parse('$API_BASE_URL/medications/api/prescriptions/$pid/add_drug/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({"raw_name": rawName, "frequency": frequency, "days": days, "total_amount": totalAmount}),
+      );
+
+      final data = json.decode(utf8.decode(response.bodyBytes));
+
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✅ 成功加入藥品 「$rawName」！'), backgroundColor: Colors.teal));
+        _fetchPrescriptionDetails(); 
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('新增失敗：${data['message']}'), backgroundColor: Colors.redAccent));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線失敗：$e'), backgroundColor: Colors.redAccent));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // 🌟 核心 API 串接：真實刪除單一藥品 (對齊規格書四-7)
+  Future<void> _deleteSingleDrug(int pdId, String drugName) async {
+    try {
+      debugPrint('👉 準備刪除藥品明細，ID: $pdId');
+      final response = await http.post(
+        Uri.parse('$API_BASE_URL/medications/api/prescriptions/drug/$pdId/delete/'),
+      );
+      
+      final data = json.decode(utf8.decode(response.bodyBytes));
+      
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('🗑️ 已成功刪除藥品「$drugName」'), backgroundColor: Colors.teal)
+        );
+        // 刪除成功後，重新抓一次藥單明細，確保安全檢測與紅綠燈狀態是正確的
+        _fetchPrescriptionDetails();
+      } else {
+        // 如果後端刪除失敗，把資料重新抓回來還原畫面
+        _fetchPrescriptionDetails();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('刪除失敗：${data['message']}'), backgroundColor: Colors.redAccent)
+        );
+      }
+    } catch (e) {
+      _fetchPrescriptionDetails(); // 還原畫面
+      debugPrint('❌ 刪除單一藥品發生錯誤: $e');
+    }
+  }
+
   void _showAddDrugDialog() {
     final TextEditingController nameCtrl = TextEditingController();
     final TextEditingController freqCtrl = TextEditingController(text: '每日三次');
     final TextEditingController daysCtrl = TextEditingController(text: '3');
     final TextEditingController amountCtrl = TextEditingController(text: '9');
-    bool simulateSevereDanger = false; 
 
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Row(
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [Icon(Icons.medication, color: Colors.teal), SizedBox(width: 10), Text('手動新增藥品', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18))],
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.medication, color: Colors.teal),
-              SizedBox(width: 10),
-              Text('手動新增藥品紀錄', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: '藥品原名 (raw_name)', hintText: '例如：Aspirin')),
+              TextField(controller: freqCtrl, decoration: const InputDecoration(labelText: '服用頻率 (frequency)', hintText: '例如：每日一次')),
+              Row(
+                children: [
+                  Expanded(child: TextField(controller: daysCtrl, decoration: const InputDecoration(labelText: '天數 (days)', hintText: '例如：3'))),
+                  const SizedBox(width: 15),
+                  Expanded(child: TextField(controller: amountCtrl, decoration: const InputDecoration(labelText: '總量 (total_amount)', hintText: '例如：9'))),
+                ],
+              ),
             ],
           ),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: '藥品原名 (raw_name)', hintText: '例如：Aspirin')),
-                TextField(controller: freqCtrl, decoration: const InputDecoration(labelText: '服用頻率 (frequency)', hintText: '例如：每日一次')),
-                Row(
-                  children: [
-                    Expanded(child: TextField(controller: daysCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '天數 (days)'))),
-                    const SizedBox(width: 15),
-                    Expanded(child: TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '總量 (total_amount)'))),
-                  ],
-                ),
-                const SizedBox(height: 15),
-                CheckboxListTile(
-                  title: const Text('模擬此藥踩到交互作用地雷', style: TextStyle(fontSize: 13, color: Colors.redAccent)),
-                  value: simulateSevereDanger,
-                  activeColor: Colors.redAccent,
-                  onChanged: (val) {
-                    setDialogState(() { simulateSevereDanger = val!; });
-                  },
-                )
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消', style: TextStyle(color: Colors.grey))),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
-              onPressed: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('這項功能準備中！'), backgroundColor: Colors.teal));
-              },
-              child: const Text('加入', style: TextStyle(color: Colors.white)),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+            onPressed: () {
+              Navigator.pop(context);
+              _addSingleDrug(nameCtrl.text, freqCtrl.text, daysCtrl.text, amountCtrl.text);
+            },
+            child: const Text('加入', style: TextStyle(color: Colors.white)),
+          ),
+        ],
       ),
     );
   }
@@ -1260,7 +1364,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                               itemCount: _meds.length,
                               itemBuilder: (context, index) {
                                 final med = _meds[index];
-                                bool isDanger = med['is_severe_danger'] == true;
+                                bool _isMedSevere = med['is_severe_danger'] == true;
 
                                 return Container(
                                   margin: const EdgeInsets.only(bottom: 12),
@@ -1277,14 +1381,22 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                       child: const Icon(Icons.delete_forever, color: Colors.white, size: 28),
                                     ),
                                     onDismissed: (direction) {
+                                      // 💡 1. 取得要刪除的 ID 與名稱
+                                      final deletedId = med['id'];
+                                      final deletedName = med['raw_name'] ?? '未知藥品';
+                                      
+                                      // 💡 2. 畫面上先樂觀移除，讓動畫順利播放
                                       setState(() { _meds.removeAt(index); });
+
+                                      // 💡 3. 呼叫後端真正刪除
+                                      _deleteSingleDrug(deletedId, deletedName);
                                     },
                                     child: Container(
                                       width: double.infinity, padding: const EdgeInsets.all(16),
                                       decoration: BoxDecoration(
                                         color: Colors.white,
                                         borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(color: isDanger ? Colors.redAccent : Colors.grey.shade200, width: isDanger ? 2.0 : 1.0),
+                                        border: Border.all(color: _isMedSevere ? Colors.redAccent : Colors.grey.shade200, width: _isMedSevere ? 2.0 : 1.0),
                                         boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 3)],
                                       ),
                                       child: Column(
@@ -1296,7 +1408,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                               Expanded(
                                                 child: Row(
                                                   children: [
-                                                    if (isDanger) ...[
+                                                    if (_isMedSevere) ...[
                                                       const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 24),
                                                       const SizedBox(width: 6),
                                                     ],
@@ -1306,7 +1418,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                                         style: TextStyle(
                                                           fontSize: 18, 
                                                           fontWeight: FontWeight.bold, 
-                                                          color: isDanger ? Colors.redAccent : Colors.black87 
+                                                          color: _isMedSevere ? Colors.redAccent : Colors.black87 
                                                         )
                                                       ),
                                                     ),
@@ -1320,21 +1432,21 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                                     builder: (context) => AlertDialog(
                                                       title: Text('${med['raw_name']} 詳細資訊', style: const TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
                                                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                                                      content: Text('中文譯名：${med['med_ch'] ?? "無資料"}\n服用天數：${med['days'] ?? "未知"}天\n總計數量：${med['total_amount'] ?? "未知"}'),
+                                                      content: Text('中文譯名：${med['med_ch'] ?? "無資料"}\n服用天數：${med['days'] ?? "未知"} \n總計數量：${med['total_amount'] ?? "未知"}'),
                                                       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('關閉'))],
                                                     )
                                                   );
                                                 },
                                                 child: Container(
                                                   width: 35, height: 35,
-                                                  decoration: BoxDecoration(color: isDanger ? Colors.red.withOpacity(0.1) : Colors.teal.shade50, shape: BoxShape.circle),
-                                                  child: Center(child: Icon(Icons.info_outline, color: isDanger ? Colors.redAccent : Colors.teal, size: 18)),
+                                                  decoration: BoxDecoration(color: _isMedSevere ? Colors.red.withOpacity(0.1) : Colors.teal.shade50, shape: BoxShape.circle),
+                                                  child: Center(child: Icon(Icons.info_outline, color: _isMedSevere ? Colors.redAccent : Colors.teal, size: 18)),
                                                 ),
                                               )
                                             ],
                                           ),
                                           const SizedBox(height: 6),
-                                          Text('用法頻率: ${med['frequency'] ?? ""}  |  看診天數: ${med['days'] ?? ""}天  |  總量: ${med['total_amount'] ?? ""}', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                                          Text('用法頻率: ${med['frequency'] ?? ""}  |  看診天數: ${med['days'] ?? ""}  |  總量: ${med['total_amount'] ?? ""}', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
                                           
                                           if (med['warnings'] != null && (med['warnings'] as List).isNotEmpty) ...[
                                             const SizedBox(height: 10),
