@@ -37,6 +37,9 @@ urlpatterns = [
     # 設定吃藥提醒的 
     path('api/reminders/set/', reminders.set_medication_reminder, name='set_reminder'),
 
+    # 取得提醒列表 (GET)
+    path('api/reminders/list/', reminders.get_reminders_list, name='get_reminders_list'),
+
     # 吃藥紀錄回報 
     path('api/history/record/', history.record_taking_status, name='record_taking_status'),
 ]

@@ -52,3 +52,47 @@ def set_medication_reminder(request):
             return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
 
     return JsonResponse({'status': 'error', 'message': '請使用 POST 方法'}, status=405)
+
+def get_reminders_list(request):
+    """
+    取得特定藥單的所有提醒紀錄 API [GET]
+    用途：供前端撈取並顯示已設定的鬧鐘列表
+    """
+    if request.method == 'GET':
+        try:
+            # 1. 從網址列（URL Parameter）抓取 prescription_id
+            prescription_id = request.GET.get('prescription_id')
+            
+            if not prescription_id:
+                return JsonResponse({'status': 'error', 'message': '缺少必要的查詢參數 prescription_id'}, status=400)
+
+            # 2. 透過 ORM 撈出所有屬於這張藥單的「處方藥品」
+            # 這裡用 filter(prescription_id=...) 一口氣把這張藥單的所有藥撈出來
+            drug_instances = PrescriptionDrug.objects.filter(prescription_id=prescription_id)
+            
+            # 3. 找出這些藥對應的所有提醒（Remind）
+            # 我們利用「雙層迴圈」或「__in」語法，把所有鬧鐘打包成前端要的 JSON 格式
+            reminders_data = []
+            
+            for drug in drug_instances:
+                # 撈出這顆藥綁定的所有鬧鐘
+                reminds = Remind.objects.filter(prescription_drug=drug)
+                for r in reminds:
+                    reminders_data.append({
+                        'remind_id': r.remind_id,
+                        'prescription_drug_id': drug.id,
+                        'raw_name': drug.raw_name,  # 順便把藥品中文化名稱吐給前端，方便他們直接畫在畫面上
+                        'frequency_tag': r.frequency_tag,
+                        'remind_time': r.remind_time.strftime('%H:%M:%S') if r.remind_time else ""
+                    })
+
+            # 4. 回傳給前端
+            return JsonResponse({
+                'status': 'success',
+                'data': reminders_data
+            }, status=200)
+
+        except Exception as e:
+            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
+
+    return JsonResponse({'status': 'error', 'message': '請使用 GET 方法'}, status=405)
