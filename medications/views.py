@@ -66,11 +66,12 @@ def confirm_and_save_prescription_api(request):
             # 第一階段：準備資料與查詢
             for drug in drugs_list:
                 search_kw = drug.get('search_keyword', '')
+                
                 db_info = search_drug_in_db(search_kw)
                 
-                db_drug = Drug.objects.filter(
-                    Q(med_ch__icontains=search_kw) | Q(med_en__icontains=search_kw)
-                ).first()
+                # 🌟 修改點 1：刪除原本重複且錯誤的 Drug.objects.filter 查詢。
+                # 直接取出 utils.py 幫我們找好的藥品實體，並將其從 db_info 中移除(避免後續轉 JSON 報錯)
+                db_drug = db_info.pop("drug_obj", None)
 
                 existing_fda_results = []
                 need_fda_query = False
@@ -96,7 +97,7 @@ def confirm_and_save_prescription_api(request):
                 
                 report_item = {
                     "raw_name": drug.get('raw_name', ''),
-                    "search_keyword": search_kw,
+                    "search_keyword": search_kw, # 保留最原始完整的 search_keyword 給前端
                     "frequency": drug.get('frequency', ''),
                     "days": drug.get('days', ''),
                     "total_amount": drug.get('total_amount', ''),
@@ -158,13 +159,12 @@ def confirm_and_save_prescription_api(request):
             # 存入藥品明細與警告
             for data in final_report_data:
                 # 直接把剛才找好的 db_drug_obj 拿出來用，並從字典裡移除 (以免轉 JSON 時報錯)
-                db_drug = data.pop('db_drug_obj', None)
-
+                db_drug_for_save = data.pop('db_drug_obj', None)
 
                 try:
                     pd_item = PrescriptionDrug.objects.create(
                         prescription=new_prescription,
-                        drug=db_drug,
+                        drug=db_drug_for_save,
                         raw_name=data.get('raw_name', ''),
                         total_amount=extract_int(data.get('total_amount')),
                         frequency=data.get('frequency', ''),
@@ -175,16 +175,18 @@ def confirm_and_save_prescription_api(request):
                 except Exception as e:
                     return JsonResponse({'status': 'error', 'message': f'💥 [存入藥品明細失敗] {str(e)}'}, status=500)
                 
-                # 存入警告 (使用 get_or_create 確保絕對不會重複)
-                for w in data.get("fda_result", []):
-                    try:
-                        DrugWarning.objects.get_or_create(
-                            drug=db_drug,
-                            conflict_target=w['conflict_target'],
-                            defaults={'warning_desc': w['warning_desc']}
-                        )
-                    except Exception as e:
-                        return JsonResponse({'status': 'error', 'message': f'💥 [存入警告失敗] {str(e)}'}, status=500)
+                # 🌟 修改點 2：存入警告的防呆機制
+                # 只有資料庫確實有這顆藥時，才建立關聯，避免發生 NOT NULL constraint failed
+                if db_drug_for_save:
+                    for w in data.get("fda_result", []):
+                        try:
+                            DrugWarning.objects.get_or_create(
+                                drug=db_drug_for_save,
+                                conflict_target=w['conflict_target'],
+                                defaults={'warning_desc': w['warning_desc']}
+                            )
+                        except Exception as e:
+                            return JsonResponse({'status': 'error', 'message': f'💥 [存入警告失敗] {str(e)}'}, status=500)
 
             # 3. 將所有資料傳回前端
             return JsonResponse({

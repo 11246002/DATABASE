@@ -28,7 +28,7 @@ def extract_drugs_from_image(image_file):
     prompt = """這是一張藥單照片。請擷取所有藥品資料並整理成 JSON。格式：
     {
         "raw_name": "原始藥名", 
-        "search_keyword": "核心藥名", 
+        "search_keyword": "核心藥名(可以有多個名字，要保留英文名字，以利後續資料庫搜尋，以空格分開，例如: Amoxicillin 阿莫西林)", 
         "frequency": "服藥頻率(例如: 每日一次、三餐飯後、每六小時一次等)",
         "days": "服用天數(例如: 3天、7天)",
         "total_amount": "給藥總數量(例如: 21顆、1瓶)"
@@ -49,6 +49,7 @@ def extract_drugs_from_image(image_file):
 def search_drug_in_db(search_kw):    
 
     result = {
+        "drug_obj": None,
         "license": "無資料",
         "med_ch": "查無官方名稱",
         "element": "無資料",
@@ -62,14 +63,30 @@ def search_drug_in_db(search_kw):
     if not search_kw:
         return result
 
-    # 執行模糊搜尋：使用 Q 物件同時搜尋中文或英文欄位
-    match_drug = Drug.objects.filter(
-        Q(med_ch__icontains=search_kw) | 
-        Q(med_en__icontains=search_kw)
-    ).first()
+    # 1. 支援多個 search_keyword：用空白切開成陣列
+    keyword_list = search_kw.split()
+    match_drug = None
+
+    # 2. 備援機制：依序使用每個詞進行搜尋，直到找到為止
+    for kw in keyword_list:
+        kw = kw.strip()
+        if not kw:
+            continue
+            
+        # 3. 加入主成分 (element) 搜尋
+        match_drug = Drug.objects.filter(
+            Q(med_ch__icontains=kw) | 
+            Q(med_en__icontains=kw) |
+            Q(element__icontains=kw)
+        ).first()
+        
+        # 只要用其中一個詞查到了結果，就立刻中斷迴圈
+        if match_drug:
+            break
     
     if match_drug:
         
+        result["drug_obj"] = match_drug  # 將實體放入回傳結果
         result["license"] = getattr(match_drug, 'license', '無資料')
         result["med_ch"] = getattr(match_drug, 'med_ch', '查無官方名稱')
         result["indications"] = getattr(match_drug, 'indications', '無資料')
