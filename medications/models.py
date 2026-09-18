@@ -114,4 +114,62 @@ class TakingRecord(models.Model):
 
     def __str__(self):
         return f"{self.remind} - time:\"{self.taken_at}\" - {self.status}"
-    
+
+
+# ==========================================
+# 健康存摺同步 - 歷史藥歷紀錄
+# ==========================================
+class MedicationHistory(models.Model):
+
+    history_id = models.AutoField(primary_key=True)
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True
+    )
+
+    drug_code = models.CharField(max_length=50)           # 健保藥品代碼（如 BC24512100）
+
+    drug_name = models.CharField(max_length=255)          # 藥品名稱（如 Candesartan）
+
+    dosage = models.CharField(max_length=50)              # 劑量（如 8mg）
+
+    frequency = models.CharField(max_length=50)           # 頻率（如 QD、BID、TID）
+
+    days = models.IntegerField()                          # 給藥天數
+
+    hosp_name = models.CharField(max_length=100)          # 開立醫療院所名稱
+
+    rx_date = models.DateField()                          # 處方開立日期
+
+    synced_at = models.DateTimeField(auto_now_add=True)   # 資料同步時間（自動記錄）
+
+    def __str__(self):
+        return f"{self.user} - {self.drug_name} ({self.rx_date})"
+
+
+# ==========================================
+# 健康存摺同步 - 患者過敏原紀錄
+# ==========================================
+class PatientAllergy(models.Model):
+
+    allergy_id = models.AutoField(primary_key=True)
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True
+    )
+
+    allergen_name = models.CharField(max_length=255)      # 過敏原名稱（如 Amoxicillin）
+
+    reaction = models.TextField(blank=True, null=True)    # 過敏反應描述（如 皮膚紅疹、搔癢）
+
+    synced_at = models.DateTimeField(auto_now_add=True)   # 資料同步時間（自動記錄）
+
+    def __str__(self):
+        return f"{self.user} - 過敏原：{self.allergen_name}"
+

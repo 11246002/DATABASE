@@ -13,7 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // 🌟 2. 新增的變數：因為你用網頁版測試，所以直接用 127.0.0.1 即可！
 // 網頁開發建議改為 127.0.0.1 或 localhost，避免跨網域問題
-const String API_BASE_URL = 'http://192.168.0.20:8000';
+const String API_BASE_URL = 'http://127.0.0.1:8000';
 
 late List<CameraDescription> cameras;
 

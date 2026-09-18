@@ -2,6 +2,7 @@ from django.urls import path
 from . import views
 from . import reminders
 from . import history
+from . import health_bank
 
 urlpatterns = [
     # 辨識藥單 
@@ -42,4 +43,7 @@ urlpatterns = [
 
     # 吃藥紀錄回報 
     path('api/history/record/', history.record_taking_status, name='record_taking_status'),
+
+    # 健康存摺模擬端點
+    path("api/v1/health-bank/sync/", health_bank.mock_health_bank_sync, name="mock_health_bank_sync"),
 ]
