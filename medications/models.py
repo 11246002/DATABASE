@@ -1,4 +1,6 @@
 from django.db import models
+from django.utils import timezone
+from datetime import timedelta
 from accounts.models import User
 
 
@@ -95,6 +97,47 @@ class Remind(models.Model):
 
     remind_time = models.TimeField()
 
+    is_active = models.BooleanField(default=True)
+
+    @property
+    def start_date(self):
+        """服藥起始日 (來自 Prescription.visit_date)"""
+        if self.prescription_drug and self.prescription_drug.prescription and self.prescription_drug.prescription.visit_date:
+            v = self.prescription_drug.prescription.visit_date
+            return v.date() if hasattr(v, 'date') else v
+        return None
+
+    @property
+    def end_date(self):
+        """服藥結束日 (start_date + days - 1)"""
+        s = self.start_date
+        if s and self.prescription_drug and self.prescription_drug.days and self.prescription_drug.days > 0:
+            return s + timedelta(days=self.prescription_drug.days - 1)
+        return None
+
+    @property
+    def is_expired(self):
+        """判斷該鬧鐘是否已過期 (以目前日期與 end_date 比對)"""
+        end = self.end_date
+        if end:
+            return timezone.localdate() > end
+        return False
+
+    def delete(self, using=None, keep_parents=False, force=False):
+        """軟刪除：將 is_active 設為 False，避免外鍵 CASCADE 連帶清空 TakingRecord 歷史"""
+        if force:
+            return super().delete(using=using, keep_parents=keep_parents)
+        self.is_active = False
+        self.save(update_fields=['is_active'])
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['prescription_drug', 'frequency_tag'],
+                name='unique_prescription_drug_frequency_tag'
+            )
+        ]
+
     def __str__(self):
         return f"{self.remind_id}-{self.prescription_drug.raw_name} - {self.frequency_tag} at {self.remind_time}"
     
@@ -110,10 +153,21 @@ class TakingRecord(models.Model):
 
     status = models.CharField(max_length=20)
 
-    taken_at = models.DateTimeField()
+    # 專門記錄打卡日期，配合 unique constraint 達到資料庫層級防重複打卡
+    record_date = models.DateField(default=timezone.localdate)
+
+    taken_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['remind', 'record_date'],
+                name='unique_remind_record_date'
+            )
+        ]
 
     def __str__(self):
-        return f"{self.remind} - time:\"{self.taken_at}\" - {self.status}"
+        return f"{self.remind} - date:{self.record_date} time:\"{self.taken_at}\" - {self.status}"
 
 
 # ==========================================
@@ -172,4 +226,3 @@ class PatientAllergy(models.Model):
 
     def __str__(self):
         return f"{self.user} - 過敏原：{self.allergen_name}"
-

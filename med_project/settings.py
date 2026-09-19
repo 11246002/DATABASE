@@ -109,7 +109,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Taipei'
 
 USE_I18N = True
 
@@ -124,3 +124,7 @@ STATIC_URL = 'static/'
 CORS_ALLOW_ALL_ORIGINS = True
 
 AUTH_USER_MODEL = 'accounts.User'
+
+# Media files (Uploaded by user)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'

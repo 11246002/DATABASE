@@ -41,8 +41,20 @@ urlpatterns = [
     # 取得提醒列表 (GET)
     path('api/reminders/list/', reminders.get_reminders_list, name='get_reminders_list'),
 
+    # 今日/特定日期用藥清單聚合 API (GET/POST)
+    path('api/reminders/today/', reminders.get_today_reminders, name='get_today_reminders'),
+    path('api/reminders/today/<int:user_id>/', reminders.get_today_reminders, name='get_today_reminders_by_user'),
+
+    # 單筆鬧鐘刪除與開關 API (DELETE / POST)
+    path('api/reminders/<int:remind_id>/delete/', reminders.delete_single_reminder, name='delete_single_reminder'),
+    path('api/reminders/<int:remind_id>/toggle/', reminders.toggle_single_reminder, name='toggle_single_reminder'),
+
     # 吃藥紀錄回報 
     path('api/history/record/', history.record_taking_status, name='record_taking_status'),
+
+    # 服藥遵從率與歷史統計 API (GET)
+    path('api/history/stats/', history.get_medication_adherence_stats, name='get_medication_adherence_stats'),
+    path('api/history/stats/<int:user_id>/', history.get_medication_adherence_stats, name='get_medication_adherence_stats_by_user'),
 
     # 健康存摺模擬端點
     path("api/v1/health-bank/sync/", health_bank.mock_health_bank_sync, name="mock_health_bank_sync"),
