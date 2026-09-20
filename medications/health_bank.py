@@ -12,17 +12,8 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from .models import MedicationHistory, PatientAllergy
+from accounts.models import User
 import json
-
-# 🔮 FUTURE-SDK [1/5]：匯入真實 SDK 套件
-# ─── 目前不需要額外套件，未來對接時需新增以下 import ───
-# import requests  # 用於向健保署 API 發送 HTTP 請求
-# import os        # 用於讀取環境變數中的 client_id / client_secret
-#
-# 並在 .env 中新增以下設定：
-# HEALTH_BANK_CLIENT_ID=你的應用程式ID
-# HEALTH_BANK_CLIENT_SECRET=你的應用程式密鑰
-# HEALTH_BANK_API_URL=https://api.nhi.gov.tw/v1  (健保署正式 API 網址)
 
 
 @csrf_exempt
@@ -30,24 +21,40 @@ def mock_health_bank_sync(request):
     """
     健康存摺同步 API
 
-    目前為 Mock 模擬模式，使用固定假資料進行開發與展示。
-    未來對接真實健保署 SDK 後，僅需替換「資料來源」區塊，
-    前端呼叫方式與回應格式皆不需更動。
+    前端必須傳遞 user_id：
+    - Body JSON: {"user_id": 1}
+    - 或 Query Param: ?user_id=1
+    若未傳遞 user_id，則回傳 400 錯誤。
     """
     if request.method == "POST":
+        user_id = None
 
-        # 🔮 FUTURE-SDK [2/5]：驗證使用者身分與取得授權 Token
-        # ─── 目前：直接從 request.user 取得（無強制驗證）───
-        # ─── 未來：前端需在 POST body 中帶入使用者透過健保快易通取得的授權 Token ───
-        #
-        # 未來的程式碼大致如下：
-        # body = json.loads(request.body)
-        # health_bank_token = body.get("health_bank_token")
-        # if not health_bank_token:
-        #     return JsonResponse({"status": "error", "message": "缺少健康存摺授權 Token"}, status=401)
+        # 1. 優先從 Request Body 讀取 {"user_id": 1}
+        if request.body:
+            try:
+                data = json.loads(request.body)
+                user_id = data.get("user_id")
+            except Exception:
+                pass
 
-        # ✅ KEEP：取得目前登入的使用者（未來同樣需要，用來綁定資料歸屬）
-        user = request.user if request.user.is_authenticated else None
+        # 2. 次之從 Query Param 讀取 ?user_id=1
+        if not user_id:
+            user_id = request.GET.get("user_id")
+
+        # 3. 驗證是否提供 user_id
+        if not user_id:
+            return JsonResponse({
+                "status": "error",
+                "message": "請提供 user_id（例如 JSON Body: {\"user_id\": 1} 或 Query: ?user_id=1）"
+            }, status=400)
+
+        # 4. 檢查該使用者是否存在於資料庫（專案的 User 主鍵欄位名稱為 user_id）
+        user = User.objects.filter(user_id=user_id).first()
+        if not user:
+            return JsonResponse({
+                "status": "error",
+                "message": f"找不到 ID 為 {user_id} 的使用者"
+            }, status=404)
 
         # ==================================================
         # 🔮 FUTURE-SDK [3/5]：資料來源（此區塊為唯一核心替換區）

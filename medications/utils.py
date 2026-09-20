@@ -6,7 +6,7 @@ from PIL import Image
 from dotenv import load_dotenv
 import re
 from django.db.models import Q
-from .models import Drug, PrescriptionDrug, DrugWarning
+from .models import Drug, PrescriptionDrug, DrugWarning, MedicationHistory, PatientAllergy
 from accounts.models import User
 
 load_dotenv()
@@ -199,21 +199,31 @@ def extract_int(text):
     return int(nums[0]) if nums else 0
 
 
-# 用藥安全檢查小工具：負責交叉比對過敏與藥物衝突。
+# 用藥安全檢查小工具：負責交叉比對過敏與藥物衝突（整合健康存摺資料）。
 def check_user_medication_safety(user_id):
     try:
         user_obj = User.objects.filter(user_id=user_id).first()
         if not user_obj:
             return False, '找不到使用者'
 
-        # 1. 整理過敏原
+        # 1. 整理過敏原（雙軌來源：使用者手動輸入 + 健康存摺 PatientAllergy）
         allergy_keywords = []
         if user_obj.allergies:
-            allergy_keywords = [k.strip().lower() for k in user_obj.allergies.replace('，', ',').split(',') if k.strip()]
+            allergy_keywords.extend([k.strip().lower() for k in user_obj.allergies.replace('，', ',').split(',') if k.strip()])
 
+        # 🌟 整合健康存摺同步之過敏原
+        bank_allergies = list(PatientAllergy.objects.filter(user=user_obj))
+        for ba in bank_allergies:
+            if ba.allergen_name and ba.allergen_name.strip():
+                allergy_keywords.append(ba.allergen_name.strip().lower())
+
+        # 2. 取得使用者在 App 中的當前用藥清單
         all_user_drugs = list(PrescriptionDrug.objects.filter(
             prescription__user=user_obj
         ).select_related('drug', 'prescription'))
+
+        # 3. 取得健康存摺中的歷史藥歷 (MedicationHistory)
+        bank_history_meds = list(MedicationHistory.objects.filter(user=user_obj))
 
         # 初始化字典
         drug_results_map = {}
@@ -228,42 +238,50 @@ def check_user_medication_safety(user_id):
                 'warnings': []
             }
 
-        # 2. 開始精準比對
+        # 4. 開始精準比對
         for pd in all_user_drugs:
             # 整理這顆藥物自己的名字
             own_names = [pd.raw_name.lower()]
             if pd.drug and pd.drug.med_ch: own_names.append(pd.drug.med_ch.lower())
             if pd.drug and pd.drug.med_en: own_names.append(pd.drug.med_en.lower())
+            if pd.drug and getattr(pd.drug, 'element', None): own_names.append(pd.drug.element.lower())
 
             # ==========================================
-            # [A] 檢查過敏 (獨立檢查：這顆藥本身是否為過敏原)
+            # [A] 檢查過敏 (自填過敏原 + 健康存摺過敏原)
             # ==========================================
-            hit_allergy = any(kw in name or name in kw for kw in allergy_keywords for name in own_names if kw and name)
-            if hit_allergy:
-                drug_results_map[pd.id]['is_severe_danger'] = True
-                drug_results_map[pd.id]['warnings'].append({
-                    'conflict_target': '個人過敏原',
-                    'warning_desc': '此藥物含有您的過敏原成分，請勿服用！',
-                    'is_allergy_conflict': True,
-                    'is_drug_conflict': False,
-                    'conflicting_drug_names': [], # 過敏不是藥物互撞，所以為空
-                    'conflicting_drug_ids': []
-                })
+            for kw in allergy_keywords:
+                if any(kw in name or name in kw for name in own_names if kw and name):
+                    drug_results_map[pd.id]['is_severe_danger'] = True
+                    # 判斷是來自健康存摺還是個人自填
+                    is_from_bank = any(ba.allergen_name.strip().lower() == kw for ba in bank_allergies)
+                    source_desc = "健保署健康存摺紀錄" if is_from_bank else "個人自填過敏原"
+
+                    # 避免重複塞入相同的過敏警告
+                    already_warned = any(w.get('conflict_target') == f"過敏原：{kw}" for w in drug_results_map[pd.id]['warnings'])
+                    if not already_warned:
+                        drug_results_map[pd.id]['warnings'].append({
+                            'conflict_target': f"過敏原：{kw}",
+                            'warning_desc': f"此藥物含有與您【{source_desc}】吻合之過敏原成分（{kw}），請勿服用！",
+                            'is_allergy_conflict': True,
+                            'is_drug_conflict': False,
+                            'source': source_desc,
+                            'conflicting_drug_names': [],
+                            'conflicting_drug_ids': []
+                        })
 
             if not pd.drug:
                 continue
 
             # ==========================================
-            # [B] 檢查藥品衝突與保留衛教資訊
+            # [B] 檢查藥品衝突（當前藥物 vs 當前其他藥物）
             # ==========================================
             warnings = DrugWarning.objects.filter(drug=pd.drug)
             for w in warnings:
                 target = w.conflict_target.lower()
                 
                 hit_other_drug = False
-                conflicting_pd_list = [] # 🌟 用來收集到底撞到了哪些藥
+                conflicting_pd_list = []
 
-                # 去檢查使用者的其他藥品
                 for other_pd in all_user_drugs:
                     if other_pd.id == pd.id: 
                         continue 
@@ -271,14 +289,12 @@ def check_user_medication_safety(user_id):
                     other_names = [other_pd.raw_name.lower()]
                     if other_pd.drug and other_pd.drug.med_ch: other_names.append(other_pd.drug.med_ch.lower())
                     if other_pd.drug and other_pd.drug.med_en: other_names.append(other_pd.drug.med_en.lower())
+                    if other_pd.drug and getattr(other_pd.drug, 'element', None): other_names.append(other_pd.drug.element.lower())
 
-                    # 如果警告目標命中了另一顆藥
                     if any(name in target or target in name for name in other_names if name):
                         hit_other_drug = True
-                        conflicting_pd_list.append(other_pd) # 🌟 抓到了！把這顆藥加進名單
+                        conflicting_pd_list.append(other_pd)
 
-                # 無論有沒有撞到，都把這條警告塞進去（作為衛教資訊）
-                # 🌟 如果有撞到，就把對方的名字和 ID 寫進去！
                 drug_results_map[pd.id]['warnings'].append({
                     'conflict_target': w.conflict_target,
                     'warning_desc': w.warning_desc,
@@ -288,16 +304,11 @@ def check_user_medication_safety(user_id):
                     'conflicting_drug_ids': [cpd.id for cpd in conflicting_pd_list]
                 })
 
-                # ==========================================
                 # [C] 連坐法：雙向標示危險
-                # ==========================================
                 if hit_other_drug:
-                    drug_results_map[pd.id]['is_severe_danger'] = True # 自己亮紅燈
-                    
+                    drug_results_map[pd.id]['is_severe_danger'] = True
                     for cpd in conflicting_pd_list:
-                        drug_results_map[cpd.id]['is_severe_danger'] = True # 對方也亮紅燈
-                        
-                        # 幫對方加入反向衝突提示
+                        drug_results_map[cpd.id]['is_severe_danger'] = True
                         already_has_warning = any(
                             existing_w['conflict_target'] == f"反向衝突：{pd.raw_name}" 
                             for existing_w in drug_results_map[cpd.id]['warnings']
@@ -308,14 +319,33 @@ def check_user_medication_safety(user_id):
                                 'warning_desc': f"此藥物與您正在服用的 {pd.raw_name} 產生交互作用，請參考該藥物的警告說明。",
                                 'is_allergy_conflict': False,
                                 'is_drug_conflict': True,
-                                'conflicting_drug_names': [pd.raw_name], # 🌟 告訴對方是誰撞了他
-                                'conflicting_drug_ids': [pd.id]          # 🌟 附上我的 ID
+                                'conflicting_drug_names': [pd.raw_name],
+                                'conflicting_drug_ids': [pd.id]
                             })
 
-        # 回傳所有結果 (如果只要回傳危險的，可以保留過濾邏輯；如果全都要回傳，就直接 list(values))
-        # 因為妳說「所有的藥都抓出來列衛教」，所以我們把所有使用者的藥品都回傳
-        final_result = list(drug_results_map.values())
+                # ==========================================
+                # [D] 檢查與【健康存摺歷史藥歷】的衝突
+                # ==========================================
+                conflicting_bank_meds = []
+                for bmed in bank_history_meds:
+                    b_names = [bmed.drug_name.lower()]
+                    if any(bname in target or target in bname for bname in b_names if bname):
+                        conflicting_bank_meds.append(bmed)
 
+                if conflicting_bank_meds:
+                    drug_results_map[pd.id]['is_severe_danger'] = True
+                    for cb in conflicting_bank_meds:
+                        drug_results_map[pd.id]['warnings'].append({
+                            'conflict_target': f"健康存摺藥歷衝突：{cb.drug_name}",
+                            'warning_desc': f"此藥物與您在【{cb.hosp_name}】開立之健康存摺用藥【{cb.drug_name}】存在交互作用：{w.warning_desc}",
+                            'is_allergy_conflict': False,
+                            'is_drug_conflict': True,
+                            'source': '健保署健康存摺藥歷',
+                            'conflicting_drug_names': [cb.drug_name],
+                            'conflicting_drug_ids': [cb.history_id]
+                        })
+
+        final_result = list(drug_results_map.values())
         return True, final_result
 
     except Exception as e:
