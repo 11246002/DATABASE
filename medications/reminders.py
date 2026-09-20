@@ -330,6 +330,7 @@ def get_today_reminders(request, user_id=None):
                 'frequency': p_drug.frequency,
                 'days': p_drug.days,
                 'total_amount': p_drug.total_amount,
+                'remaining_amount': p_drug.remaining_amount,
                 
                 # 藥單資訊
                 'prescription_id': p.prescription_id,
