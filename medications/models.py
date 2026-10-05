@@ -5,7 +5,7 @@ from accounts.models import User
 
 
 class Drug(models.Model):
-    license = models.CharField(max_length=100)
+    license = models.CharField(max_length=100, unique=True)
     med_ch = models.CharField(max_length=100)
     med_en = models.CharField(max_length=100, blank=True, null=True)
     color = models.CharField(max_length=50, blank=True, null=True)
