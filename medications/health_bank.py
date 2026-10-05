@@ -134,6 +134,51 @@ def mock_health_bank_sync(request):
                 }
             )
 
+        # 🌟 同步更新回 User.allergies（具備防重複、清除「無/沒有」、與時間標記）
+        if user:
+            existing_text = user.allergies or ""
+            # 將現有的過敏原拆分
+            raw_list = [item.strip() for item in existing_text.replace("，", ",").split(",") if item.strip()]
+
+            # 否定/無過敏詞彙黑名單（使用者初始填寫「無」、「沒有」、「None」等字樣）
+            negative_keywords = {"無", "沒有", "無過敏", "無過敏史", "暫無", "none", "no", "nil", "na", "n/a"}
+
+            # 如果這次有要同步進來的健康存摺過敏原，先過濾清除掉原有清單裡的「無」、「沒有」等字樣
+            has_new_bank_allergies = len(mock_sdk_payload["allergy_records"]) > 0
+            if has_new_bank_allergies:
+                existing_list = [item for item in raw_list if item.lower() not in negative_keywords]
+                # 若原本有否定字詞被清掉，標記需要更新
+                if len(existing_list) != len(raw_list):
+                    updated = True
+                else:
+                    updated = False
+            else:
+                existing_list = raw_list
+                updated = False
+
+            existing_lower = [item.lower() for item in existing_list]
+
+            from django.utils import timezone
+            now_str = timezone.localtime().strftime("%Y-%m-%d %H:%M")
+
+            for alg in mock_sdk_payload["allergy_records"]:
+                alg_name = alg["allergen_name"].strip()
+                alg_name_lower = alg_name.lower()
+
+                # 模糊相似比對：檢查現有紀錄中是否已包含該過敏原關鍵字（例如已有 Amoxicillin 就不重複加）
+                already_exists = any(alg_name_lower in ex or ex in alg_name_lower for ex in existing_lower)
+
+                if not already_exists:
+                    # 格式：Amoxicillin (於 2026-10-04 17:50 同步健保署健康存摺)
+                    new_entry = f"{alg_name} (於 {now_str} 同步健保署健康存摺)"
+                    existing_list.append(new_entry)
+                    existing_lower.append(alg_name_lower)
+                    updated = True
+
+            if updated:
+                user.allergies = "，".join(existing_list)
+                user.save(update_fields=["allergies"])
+
         # ✅ KEEP：回傳結果給前端
         # （回應格式不變，前端不需要任何修改）
         return JsonResponse({
