@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -1450,7 +1451,12 @@ void _showSafetyResultDialog(List<dynamic> dangerList) {
 // ==========================================
 class PrescriptionDetailPage extends StatefulWidget {
   final Map<String, dynamic> prescription;
-  const PrescriptionDetailPage({super.key, required this.prescription});
+  final bool readOnly;
+  const PrescriptionDetailPage({
+    super.key,
+    required this.prescription,
+    this.readOnly = false,
+  });
   @override
   State<PrescriptionDetailPage> createState() => _PrescriptionDetailPageState();
 }
@@ -1459,6 +1465,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
   bool _isLoading = true; // 載入狀態
   List<dynamic> _meds = []; // 用來裝後端傳來的藥品明細
   bool _hasSevereDanger = false;
+  String? _prescriptionDetailError;
 
   @override
   void initState() {
@@ -1470,32 +1477,59 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
   Future<void> _fetchPrescriptionDetails() async {
     final pid = widget.prescription['prescription_id'];
     if (pid == null) {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _prescriptionDetailError = '無法載入藥單詳情';
+        });
+      }
       return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _prescriptionDetailError = null;
+      });
     }
 
     try {
       debugPrint('👉 準備獲取藥單明細，ID: $pid');
-      final response = await http.get(
-        Uri.parse('$API_BASE_URL/medications/api/prescription_details/$pid/'),
-      );
+      final response = await http
+          .get(
+            Uri.parse(
+              '$API_BASE_URL/medications/api/prescription_details/$pid/',
+            ),
+            headers: const {'Accept': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 15));
 
       final rawResponse = utf8.decode(response.bodyBytes);
       final data = json.decode(rawResponse);
 
-      if (response.statusCode == 200 && data['status'] == 'success') {
+      final isTransportSuccess =
+          response.statusCode >= 200 && response.statusCode < 300;
+      if (isTransportSuccess &&
+          data is Map &&
+          data['status'] == 'success' &&
+          data['data'] is List) {
+        if (!mounted) return;
         setState(() {
-          if (data['data'] is List) {
-            _meds = List<dynamic>.from(data['data']); 
-          } else {
-            _meds = data['data']['medications'] ?? data['data']['drugs'] ?? data['data']['meds'] ?? [];
-          }
-
-          _hasSevereDanger = _meds.any((m) => m['is_severe_danger'] == true);
+          _meds = List<dynamic>.from(data['data']);
+          _hasSevereDanger = _meds.any(
+            (m) => m is Map && m['is_severe_danger'] == true,
+          );
         });
+      } else {
+        final backendMessage = data is Map ? data['message'] : null;
+        _prescriptionDetailError = backendMessage is String &&
+                backendMessage.trim().isNotEmpty
+            ? backendMessage.trim()
+            : '無法載入藥單詳情';
       }
     } catch (e) {
       debugPrint('連線錯誤: $e');
+      _prescriptionDetailError = '無法載入藥單詳情';
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -1503,6 +1537,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
 
   // 🌟 核心 API 串接：手動新增單筆藥品
   Future<void> _addSingleDrug(String rawName, String frequency, String days, String totalAmount) async {
+    if (widget.readOnly) return;
     final pid = widget.prescription['prescription_id'];
     if (pid == null) return;
 
@@ -1540,6 +1575,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
 
   // 🌟 核心 API 串接：真實刪除單一藥品 (對齊規格書四-7)
   Future<void> _deleteSingleDrug(int pdId, String drugName) async {
+    if (widget.readOnly) return;
     try {
       debugPrint('👉 準備刪除藥品明細，ID: $pdId');
       final response = await http.post(
@@ -1570,6 +1606,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
   }
 
   void _showAddDrugDialog() {
+    if (widget.readOnly) return;
     final TextEditingController nameCtrl = TextEditingController();
     final TextEditingController freqCtrl = TextEditingController(text: '每日三次');
     final TextEditingController daysCtrl = TextEditingController(text: '3');
@@ -1620,7 +1657,13 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
       appBar: AppBar(
         backgroundColor: Colors.transparent, elevation: 0, 
         iconTheme: const IconThemeData(color: Colors.teal),
-        title: const Text('藥單詳細資訊', style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
+        title: Text(
+          widget.readOnly ? '藥單詳細資訊（唯讀）' : '藥單詳細資訊',
+          style: const TextStyle(
+            color: Colors.teal,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         centerTitle: true,
       ),
       body: SafeArea(
@@ -1670,21 +1713,52 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                               ),
                             ),
                           ),
-                          const SizedBox(width: 10), // 中間加一點安全距離
-                          InkWell(
-                            onTap: _showAddDrugDialog,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8), // 稍微縮小一點內距
-                              decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.teal.shade200)),
+                          if (widget.readOnly) ...[
+                            const SizedBox(width: 10),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
                               child: const Row(
                                 children: [
-                                  Icon(Icons.add, size: 16, color: Colors.teal),
+                                  Icon(
+                                    Icons.visibility_outlined,
+                                    size: 16,
+                                    color: Colors.grey,
+                                  ),
                                   SizedBox(width: 5),
-                                  Text('手動新增藥品', style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
+                                  Text(
+                                    '唯讀',
+                                    style: TextStyle(
+                                      color: Colors.grey,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
-                          ),
+                          ] else ...[
+                            const SizedBox(width: 10),
+                            InkWell(
+                              onTap: _showAddDrugDialog,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.teal.shade200)),
+                                child: const Row(
+                                  children: [
+                                    Icon(Icons.add, size: 16, color: Colors.teal),
+                                    SizedBox(width: 5),
+                                    Text('手動新增藥品', style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                       const SizedBox(height: 20),
@@ -1694,6 +1768,27 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                       Expanded(
                         child: _isLoading 
                         ? const Center(child: CircularProgressIndicator(color: Colors.teal))
+                        : _prescriptionDetailError != null
+                          ? Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _prescriptionDetailError!,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.redAccent,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  OutlinedButton.icon(
+                                    onPressed: _fetchPrescriptionDetails,
+                                    icon: const Icon(Icons.refresh),
+                                    label: const Text('重新載入'),
+                                  ),
+                                ],
+                              ),
+                            )
                         : _meds.isEmpty
                           ? const Center(child: Text('此藥單目前沒有任何藥品紀錄', style: TextStyle(color: Colors.grey)))
                           : ListView.builder(
@@ -1706,7 +1801,9 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                   margin: const EdgeInsets.only(bottom: 12),
                                   child: Dismissible(
                                     key: Key(med['id'].toString()),
-                                    direction: DismissDirection.endToStart, 
+                                    direction: widget.readOnly
+                                        ? DismissDirection.none
+                                        : DismissDirection.endToStart,
                                     background: Container(
                                       padding: const EdgeInsets.only(right: 20),
                                       decoration: BoxDecoration(
@@ -4010,6 +4107,1020 @@ class _HealthBankConsentDialogState extends State<_HealthBankConsentDialog> {
   }
 }
 
+class FamilyGroupPage extends StatefulWidget {
+  const FamilyGroupPage({super.key});
+
+  @override
+  State<FamilyGroupPage> createState() => _FamilyGroupPageState();
+}
+
+class _FamilyGroupPageState extends State<FamilyGroupPage> {
+  final TextEditingController _groupNameController = TextEditingController();
+  final TextEditingController _inviteCodeController = TextEditingController();
+
+  int? _currentUserId;
+  int? _currentGroupId;
+  String? _currentGroupName;
+  String? _currentInviteCode;
+  List<Map<String, dynamic>> _groupMembers = [];
+  bool _isRestoringGroup = true;
+  bool _isCreatingGroup = false;
+  bool _isJoiningGroup = false;
+  bool _isMembersLoading = false;
+  String? _membersError;
+  int? _openingMemberUserId;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreGroupState();
+  }
+
+  @override
+  void dispose() {
+    _groupNameController.dispose();
+    _inviteCodeController.dispose();
+    super.dispose();
+  }
+
+  int? _parseGroupPositiveInt(dynamic value) {
+    if (value is int && value > 0) return value;
+    final parsed = int.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed > 0 ? parsed : null;
+  }
+
+  void _showGroupMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.redAccent : Colors.teal,
+      ),
+    );
+  }
+
+  Future<void> _restoreGroupState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final storedUserId = prefs.get('user_id');
+    final userId = _parseGroupPositiveInt(storedUserId);
+    final storedGroupId = _parseGroupPositiveInt(prefs.get('group_id'));
+    final storedGroupUserId =
+        _parseGroupPositiveInt(prefs.get('group_user_id'));
+    final storedGroupName = prefs.getString('group_name');
+
+    if (!mounted) return;
+    if (userId == null) {
+      setState(() {
+        _isRestoringGroup = false;
+        _membersError = '登入資訊已失效，請重新登入。';
+      });
+      return;
+    }
+
+    final belongsToCurrentUser =
+        storedGroupUserId == null || storedGroupUserId == userId;
+    setState(() {
+      _currentUserId = userId;
+      _currentGroupId = belongsToCurrentUser ? storedGroupId : null;
+      _currentGroupName = belongsToCurrentUser &&
+              storedGroupName != null &&
+              storedGroupName.trim().isNotEmpty
+          ? storedGroupName.trim()
+          : null;
+      _isRestoringGroup = false;
+    });
+
+    if (belongsToCurrentUser && storedGroupId != null) {
+      await _fetchGroupMembers(storedGroupId);
+    }
+  }
+
+  Future<void> _persistCurrentGroup(int groupId, String groupName) async {
+    final userId = _currentUserId;
+    if (userId == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('group_id', groupId);
+    await prefs.setString('group_name', groupName);
+    await prefs.setInt('group_user_id', userId);
+  }
+
+  Future<Map<String, dynamic>?> _postGroupRequest(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final response = await http
+        .post(
+          Uri.parse('$API_BASE_URL$path'),
+          headers: const {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: json.encode(body),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    Map<String, dynamic>? responseData;
+    try {
+      final decoded = json.decode(utf8.decode(response.bodyBytes));
+      if (decoded is Map) {
+        responseData = Map<String, dynamic>.from(decoded);
+      }
+    } catch (e) {
+      debugPrint('Group API response 解析失敗: $e');
+    }
+
+    if (response.statusCode >= 200 &&
+        response.statusCode < 300 &&
+        responseData?['status'] == 'success') {
+      return responseData;
+    }
+
+    final backendMessage = responseData?['message'];
+    if (backendMessage is String && backendMessage.trim().isNotEmpty) {
+      throw FormatException(backendMessage.trim());
+    }
+    return null;
+  }
+
+  Future<void> _createGroup() async {
+    if (_isCreatingGroup || _isJoiningGroup) return;
+    final userId = _currentUserId;
+    if (userId == null) {
+      _showGroupMessage('登入資訊已失效，請重新登入。', isError: true);
+      return;
+    }
+    final groupName = _groupNameController.text.trim();
+    if (groupName.isEmpty) {
+      _showGroupMessage('請輸入群組名稱。', isError: true);
+      return;
+    }
+
+    setState(() => _isCreatingGroup = true);
+    String errorMessage = '建立群組失敗，請稍後再試';
+    try {
+      final responseData = await _postGroupRequest(
+        '/accounts/api/group/create/',
+        {'user_id': userId, 'group_name': groupName},
+      );
+      final data = responseData?['data'];
+      if (data is Map) {
+        final groupId = _parseGroupPositiveInt(data['group_id']);
+        final returnedName = data['group_name'];
+        final inviteCode = data['invite_code'];
+        if (groupId != null &&
+            returnedName is String &&
+            returnedName.trim().isNotEmpty &&
+            inviteCode is String &&
+            inviteCode.trim().isNotEmpty) {
+          await _persistCurrentGroup(groupId, returnedName.trim());
+          if (!mounted) return;
+          setState(() {
+            _currentGroupId = groupId;
+            _currentGroupName = returnedName.trim();
+            _currentInviteCode = inviteCode.trim();
+            _groupNameController.clear();
+          });
+          _showGroupMessage(
+            responseData?['message'] is String
+                ? responseData!['message'].toString()
+                : '群組建立成功',
+          );
+          await _fetchGroupMembers(groupId);
+          return;
+        }
+      }
+    } on FormatException catch (e) {
+      errorMessage = e.message;
+    } catch (e) {
+      debugPrint('建立群組失敗: $e');
+    } finally {
+      if (mounted) setState(() => _isCreatingGroup = false);
+    }
+    _showGroupMessage(errorMessage, isError: true);
+  }
+
+  Future<void> _joinGroup() async {
+    if (_isJoiningGroup || _isCreatingGroup) return;
+    final userId = _currentUserId;
+    if (userId == null) {
+      _showGroupMessage('登入資訊已失效，請重新登入。', isError: true);
+      return;
+    }
+    final inviteCode = _inviteCodeController.text.trim().toUpperCase();
+    if (inviteCode.isEmpty) {
+      _showGroupMessage('請輸入邀請碼。', isError: true);
+      return;
+    }
+
+    setState(() => _isJoiningGroup = true);
+    String errorMessage = '加入群組失敗，請稍後再試';
+    try {
+      final responseData = await _postGroupRequest(
+        '/accounts/api/group/join/',
+        {'user_id': userId, 'invite_code': inviteCode},
+      );
+      final data = responseData?['data'];
+      if (data is Map) {
+        final groupId = _parseGroupPositiveInt(data['group_id']);
+        final returnedName = data['group_name'];
+        if (groupId != null &&
+            returnedName is String &&
+            returnedName.trim().isNotEmpty) {
+          await _persistCurrentGroup(groupId, returnedName.trim());
+          if (!mounted) return;
+          setState(() {
+            _currentGroupId = groupId;
+            _currentGroupName = returnedName.trim();
+            _currentInviteCode = null;
+            _inviteCodeController.clear();
+          });
+          _showGroupMessage(
+            responseData?['message'] is String
+                ? responseData!['message'].toString()
+                : '加入群組成功',
+          );
+          await _fetchGroupMembers(groupId);
+          return;
+        }
+      }
+    } on FormatException catch (e) {
+      errorMessage = e.message;
+    } catch (e) {
+      debugPrint('加入群組失敗: $e');
+    } finally {
+      if (mounted) setState(() => _isJoiningGroup = false);
+    }
+    _showGroupMessage(errorMessage, isError: true);
+  }
+
+  Future<void> _fetchGroupMembers(int groupId) async {
+    final userId = _currentUserId;
+    if (userId == null || groupId <= 0) {
+      if (mounted) {
+        setState(() {
+          _isMembersLoading = false;
+          _membersError = userId == null
+              ? '登入資訊已失效，請重新登入。'
+              : '無法載入群組成員';
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      _isMembersLoading = true;
+      _membersError = null;
+    });
+    String errorMessage = '無法載入群組成員';
+
+    try {
+      final responseData = await _postGroupRequest(
+        '/accounts/api/group/members/',
+        {'user_id': userId, 'group_id': groupId},
+      );
+      final data = responseData?['data'];
+      if (data is Map) {
+        final returnedGroupId = _parseGroupPositiveInt(data['group_id']);
+        final returnedGroupName = data['group_name'];
+        final rawMembers = data['members'];
+        if (returnedGroupId == groupId &&
+            returnedGroupName is String &&
+            returnedGroupName.trim().isNotEmpty &&
+            rawMembers is List) {
+          final parsedMembers = <Map<String, dynamic>>[];
+          bool hasInvalidMember = false;
+          for (final rawMember in rawMembers) {
+            if (rawMember is! Map) {
+              hasInvalidMember = true;
+              break;
+            }
+            final member = Map<String, dynamic>.from(rawMember);
+            final memberUserId = _parseGroupPositiveInt(member['user_id']);
+            final userName = member['user_name'];
+            final nickname = member['nickname'];
+            final role = member['group_role'];
+            final joinedAt = member['joined_at'];
+            if (memberUserId == null ||
+                userName is! String ||
+                userName.trim().isEmpty ||
+                role is! String ||
+                role.trim().isEmpty ||
+                (nickname != null && nickname is! String) ||
+                (joinedAt != null && joinedAt is! String)) {
+              hasInvalidMember = true;
+              break;
+            }
+            member['user_id'] = memberUserId;
+            member['user_name'] = userName.trim();
+            member['nickname'] = nickname is String ? nickname.trim() : '';
+            member['group_role'] = role.trim();
+            member['joined_at'] = joinedAt is String ? joinedAt.trim() : '';
+            parsedMembers.add(member);
+          }
+
+          if (!hasInvalidMember) {
+            await _persistCurrentGroup(groupId, returnedGroupName.trim());
+            if (!mounted || _currentGroupId != groupId) return;
+            setState(() {
+              _currentGroupName = returnedGroupName.trim();
+              _groupMembers = parsedMembers;
+              _isMembersLoading = false;
+              _membersError = null;
+            });
+            return;
+          }
+        }
+      }
+    } on FormatException catch (e) {
+      errorMessage = e.message;
+    } catch (e) {
+      debugPrint('載入群組成員失敗: $e');
+    }
+
+    if (!mounted || _currentGroupId != groupId) return;
+    setState(() {
+      _isMembersLoading = false;
+      _membersError = errorMessage;
+    });
+  }
+
+  Future<void> _openMemberPrescriptions(
+    Map<String, dynamic> member,
+  ) async {
+    final memberUserId = _parseGroupPositiveInt(member['user_id']);
+    final currentUserId = _currentUserId;
+    if (memberUserId == null ||
+        currentUserId == null ||
+        _openingMemberUserId != null) {
+      return;
+    }
+    final nickname = member['nickname'];
+    final userName = member['user_name'];
+    final displayName = nickname is String && nickname.trim().isNotEmpty
+        ? nickname.trim()
+        : userName.toString();
+
+    setState(() => _openingMemberUserId = memberUserId);
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => GroupMemberPrescriptionsPage(
+            memberUserId: memberUserId,
+            currentUserId: currentUserId,
+            memberDisplayName: displayName,
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingMemberUserId = null);
+    }
+  }
+
+  Widget _buildGroupInputCard({
+    required IconData icon,
+    required String title,
+    required String description,
+    required TextEditingController controller,
+    required String hint,
+    required String buttonLabel,
+    required bool isLoading,
+    required VoidCallback onPressed,
+    TextCapitalization textCapitalization = TextCapitalization.none,
+  }) {
+    final anyActionLoading = _isCreatingGroup || _isJoiningGroup;
+    return Card(
+      elevation: 2,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: Colors.teal),
+                const SizedBox(width: 9),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.teal,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(description, style: TextStyle(color: Colors.grey.shade700)),
+            const SizedBox(height: 14),
+            TextField(
+              controller: controller,
+              enabled: !anyActionLoading,
+              textCapitalization: textCapitalization,
+              decoration: InputDecoration(
+                hintText: hint,
+                filled: true,
+                fillColor: Colors.grey.shade50,
+                prefixIcon: Icon(icon, color: Colors.teal),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: ElevatedButton(
+                onPressed: anyActionLoading ? null : onPressed,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: isLoading
+                    ? const SizedBox(
+                        width: 21,
+                        height: 21,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : Text(
+                        buttonLabel,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMemberCard(Map<String, dynamic> member) {
+    final memberUserId = member['user_id'] as int;
+    final nickname = member['nickname'] as String;
+    final userName = member['user_name'] as String;
+    final displayName = nickname.isNotEmpty ? nickname : userName;
+    final role = member['group_role'] as String;
+    final joinedAt = member['joined_at'] as String;
+    final isOpening = _openingMemberUserId == memberUserId;
+    final roleLabel = role == 'owner' ? '建立者' : (role == 'member' ? '成員' : role);
+
+    return Card(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: Colors.teal.shade50,
+              child: const Icon(Icons.person_outline, color: Colors.teal),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    displayName,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    roleLabel,
+                    style: const TextStyle(
+                      color: Colors.teal,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (joinedAt.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      '加入時間：$joinedAt',
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton(
+              onPressed: _openingMemberUserId == null
+                  ? () => _openMemberPrescriptions(member)
+                  : null,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.teal,
+                side: const BorderSide(color: Colors.teal),
+              ),
+              child: isOpening
+                  ? const SizedBox(
+                      width: 17,
+                      height: 17,
+                      child: CircularProgressIndicator(
+                        color: Colors.teal,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Text('查看藥單'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7F9),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.teal,
+        elevation: 0,
+        title: const Text(
+          '家庭群組',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+      ),
+      body: _isRestoringGroup
+          ? const Center(child: CircularProgressIndicator(color: Colors.teal))
+          : _currentGroupId == null
+              ? ListView(
+                  padding: const EdgeInsets.all(18),
+                  children: [
+                    if (_membersError != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(13),
+                        margin: const EdgeInsets.only(bottom: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          _membersError!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.redAccent),
+                        ),
+                      ),
+                    ],
+                    _buildGroupInputCard(
+                      icon: Icons.group_add_outlined,
+                      title: '建立群組',
+                      description: '建立家庭群組，邀請家人一起查看用藥資訊。',
+                      controller: _groupNameController,
+                      hint: '輸入群組名稱',
+                      buttonLabel: '建立',
+                      isLoading: _isCreatingGroup,
+                      onPressed: _createGroup,
+                    ),
+                    _buildGroupInputCard(
+                      icon: Icons.vpn_key_outlined,
+                      title: '加入群組',
+                      description: '輸入家人提供的邀請碼。',
+                      controller: _inviteCodeController,
+                      hint: '輸入邀請碼',
+                      buttonLabel: '加入',
+                      isLoading: _isJoiningGroup,
+                      onPressed: _joinGroup,
+                      textCapitalization: TextCapitalization.characters,
+                    ),
+                  ],
+                )
+              : RefreshIndicator(
+                  color: Colors.teal,
+                  onRefresh: () => _fetchGroupMembers(_currentGroupId!),
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(18),
+                    children: [
+                      Card(
+                        elevation: 2,
+                        color: Colors.teal,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _currentGroupName ?? '家庭群組',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              if (_currentInviteCode != null) ...[
+                                const SizedBox(height: 12),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '邀請碼：$_currentInviteCode',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                    TextButton.icon(
+                                      onPressed: () async {
+                                        await Clipboard.setData(
+                                          ClipboardData(
+                                            text: _currentInviteCode!,
+                                          ),
+                                        );
+                                        _showGroupMessage('邀請碼已複製');
+                                      },
+                                      icon: const Icon(
+                                        Icons.copy,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
+                                      label: const Text(
+                                        '複製',
+                                        style: TextStyle(color: Colors.white),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      const Text(
+                        '群組成員',
+                        style: TextStyle(
+                          color: Colors.teal,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (_isMembersLoading)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 40),
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              color: Colors.teal,
+                            ),
+                          ),
+                        )
+                      else if (_membersError != null)
+                        Column(
+                          children: [
+                            Text(
+                              _membersError!,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.redAccent),
+                            ),
+                            const SizedBox(height: 10),
+                            OutlinedButton.icon(
+                              onPressed: () =>
+                                  _fetchGroupMembers(_currentGroupId!),
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('重新載入'),
+                            ),
+                          ],
+                        )
+                      else if (_groupMembers.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 30),
+                          child: Center(child: Text('目前沒有群組成員')),
+                        )
+                      else
+                        ..._groupMembers.map(_buildMemberCard),
+                    ],
+                  ),
+                ),
+    );
+  }
+}
+
+class GroupMemberPrescriptionsPage extends StatefulWidget {
+  final int memberUserId;
+  final int currentUserId;
+  final String memberDisplayName;
+
+  const GroupMemberPrescriptionsPage({
+    super.key,
+    required this.memberUserId,
+    required this.currentUserId,
+    required this.memberDisplayName,
+  });
+
+  @override
+  State<GroupMemberPrescriptionsPage> createState() =>
+      _GroupMemberPrescriptionsPageState();
+}
+
+class _GroupMemberPrescriptionsPageState
+    extends State<GroupMemberPrescriptionsPage> {
+  bool _isMemberPrescriptionsLoading = true;
+  String? _memberPrescriptionsError;
+  List<Map<String, dynamic>> _memberPrescriptions = [];
+  int? _openingPrescriptionId;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchMemberPrescriptions();
+  }
+
+  int? _parseMemberPrescriptionInt(dynamic value) {
+    if (value is int && value > 0) return value;
+    final parsed = int.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed > 0 ? parsed : null;
+  }
+
+  int? _parseMemberDrugCount(dynamic value) {
+    if (value is int && value >= 0) return value;
+    final parsed = int.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed >= 0 ? parsed : null;
+  }
+
+  String _formatMemberVisitDate(String value) {
+    final parsed = DateTime.tryParse(value);
+    if (parsed == null) return value;
+    return '${parsed.year}/${parsed.month.toString().padLeft(2, '0')}/'
+        '${parsed.day.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _fetchMemberPrescriptions() async {
+    if (mounted) {
+      setState(() {
+        _isMemberPrescriptionsLoading = true;
+        _memberPrescriptionsError = null;
+      });
+    }
+
+    List<Map<String, dynamic>>? loadedPrescriptions;
+    String errorMessage = '無法載入此成員的藥單';
+    try {
+      final response = await http
+          .get(
+            Uri.parse(
+              '$API_BASE_URL/medications/api/prescriptions/${widget.memberUserId}/',
+            ),
+            headers: const {'Accept': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 15));
+
+      Map<String, dynamic>? responseData;
+      try {
+        final decoded = json.decode(utf8.decode(response.bodyBytes));
+        if (decoded is Map) {
+          responseData = Map<String, dynamic>.from(decoded);
+        }
+      } catch (e) {
+        debugPrint('成員藥單 response 解析失敗: $e');
+      }
+
+      final backendMessage = responseData?['message'];
+      final rawItems = responseData?['data'];
+      final isTransportSuccess =
+          response.statusCode >= 200 && response.statusCode < 300;
+      if (isTransportSuccess &&
+          responseData?['status'] == 'success' &&
+          rawItems is List) {
+        final parsedItems = <Map<String, dynamic>>[];
+        bool hasInvalidItem = false;
+        for (final rawItem in rawItems) {
+          if (rawItem is! Map) {
+            hasInvalidItem = true;
+            break;
+          }
+          final item = Map<String, dynamic>.from(rawItem);
+          final prescriptionId =
+              _parseMemberPrescriptionInt(item['prescription_id']);
+          final hospitalName = item['hospital_name'];
+          final visitDate = item['visit_date'];
+          final drugCount = _parseMemberDrugCount(item['drug_count']);
+          if (prescriptionId == null ||
+              hospitalName is! String ||
+              hospitalName.trim().isEmpty ||
+              visitDate is! String ||
+              visitDate.trim().isEmpty ||
+              drugCount == null) {
+            hasInvalidItem = true;
+            break;
+          }
+          item['prescription_id'] = prescriptionId;
+          item['hospital_name'] = hospitalName.trim();
+          item['visit_date'] = visitDate.trim();
+          item['drug_count'] = drugCount;
+          parsedItems.add(item);
+        }
+        if (!hasInvalidItem) loadedPrescriptions = parsedItems;
+      } else if (backendMessage is String &&
+          backendMessage.trim().isNotEmpty) {
+        errorMessage = backendMessage.trim();
+      }
+    } catch (e) {
+      debugPrint('載入成員藥單失敗: $e');
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isMemberPrescriptionsLoading = false;
+      if (loadedPrescriptions != null) {
+        _memberPrescriptions = loadedPrescriptions!;
+        _memberPrescriptionsError = null;
+      } else {
+        _memberPrescriptionsError = errorMessage;
+      }
+    });
+  }
+
+  Future<void> _openPrescriptionDetail(
+    Map<String, dynamic> prescription,
+  ) async {
+    final prescriptionId =
+        _parseMemberPrescriptionInt(prescription['prescription_id']);
+    if (prescriptionId == null || _openingPrescriptionId != null) return;
+
+    setState(() => _openingPrescriptionId = prescriptionId);
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => PrescriptionDetailPage(
+            prescription: prescription,
+            readOnly: widget.memberUserId != widget.currentUserId,
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingPrescriptionId = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7F9),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.teal,
+        elevation: 0,
+        title: Text(
+          '${widget.memberDisplayName}的藥單',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+      ),
+      body: _isMemberPrescriptionsLoading
+          ? const Center(child: CircularProgressIndicator(color: Colors.teal))
+          : _memberPrescriptionsError != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.cloud_off_outlined,
+                          color: Colors.grey,
+                          size: 48,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _memberPrescriptionsError!,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 14),
+                        OutlinedButton.icon(
+                          onPressed: _fetchMemberPrescriptions,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('重新載入'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : _memberPrescriptions.isEmpty
+                  ? const Center(
+                      child: Text(
+                        '此成員目前沒有藥單紀錄',
+                        style: TextStyle(color: Colors.grey, fontSize: 16),
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _memberPrescriptions.length,
+                      itemBuilder: (context, index) {
+                        final prescription = _memberPrescriptions[index];
+                        final prescriptionId =
+                            prescription['prescription_id'] as int;
+                        final isOpening =
+                            _openingPrescriptionId == prescriptionId;
+                        return Card(
+                          elevation: 2,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(14),
+                            onTap: _openingPrescriptionId == null
+                                ? () => _openPrescriptionDetail(prescription)
+                                : null,
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 46,
+                                    height: 46,
+                                    decoration: BoxDecoration(
+                                      color: Colors.teal.shade50,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: const Icon(
+                                      Icons.receipt_long_outlined,
+                                      color: Colors.teal,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 13),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          prescription['hospital_name']
+                                              .toString(),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 5),
+                                        Text(
+                                          _formatMemberVisitDate(
+                                            prescription['visit_date']
+                                                .toString(),
+                                          ),
+                                          style: TextStyle(
+                                            color: Colors.grey.shade700,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          '${prescription['drug_count']} 種藥',
+                                          style: TextStyle(
+                                            color: Colors.grey.shade600,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (isOpening)
+                                    const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.teal,
+                                      ),
+                                    )
+                                  else
+                                    const Icon(
+                                      Icons.chevron_right,
+                                      color: Colors.teal,
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+    );
+  }
+}
+
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key});
 
@@ -4738,6 +5849,72 @@ class _UserProfilePageState extends State<UserProfilePage> {
         const SizedBox(height: 20),
         _buildSectionTitle('服藥遵從率'),
         _buildAdherenceSection(),
+
+        const SizedBox(height: 20),
+        _buildSectionTitle('家庭群組'),
+        Card(
+          elevation: 2,
+          margin: const EdgeInsets.only(bottom: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => const FamilyGroupPage(),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 15,
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: Colors.teal.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.groups_outlined,
+                      color: Colors.teal,
+                      size: 27,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '家庭群組',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          '建立或加入群組，查看同群組成員藥單',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right, color: Colors.teal),
+                ],
+              ),
+            ),
+          ),
+        ),
         
         const SizedBox(height: 20),
         _buildSectionTitle('緊急聯絡人'),
