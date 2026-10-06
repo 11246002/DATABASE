@@ -15,6 +15,125 @@ import 'package:shared_preferences/shared_preferences.dart';
 // 網頁開發建議改為 127.0.0.1 或 localhost，避免跨網域問題
 const String API_BASE_URL = 'http://172.20.10.4:8000';
 
+enum _SafetyCheckStatus { safe, danger, unavailable }
+
+class _SafetyCheckResult {
+  final _SafetyCheckStatus status;
+  final List<Map<String, dynamic>> items;
+
+  const _SafetyCheckResult(this.status, [this.items = const []]);
+}
+
+bool _isDangerousSafetyItem(Map<String, dynamic> item) {
+  if (item['is_severe_danger'] == true) return true;
+  final warnings = item['warnings'] as List<Map<String, dynamic>>;
+  return warnings.any(
+    (warning) =>
+        warning['is_drug_conflict'] == true ||
+        warning['is_allergy_conflict'] == true,
+  );
+}
+
+Future<_SafetyCheckResult> _requestSafetyCheck(int userId) async {
+  try {
+    final response = await http
+        .post(
+          Uri.parse('$API_BASE_URL/medications/api/check_all_safety/'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({'user_id': userId}),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) {
+      return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
+    }
+
+    final decoded = json.decode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map ||
+        decoded['status'] != 'success' ||
+        decoded['data'] is! List) {
+      return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
+    }
+
+    final rawItems = decoded['data'] as List<dynamic>;
+    if (rawItems.isEmpty) {
+      return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
+    }
+
+    final items = <Map<String, dynamic>>[];
+    for (final rawItem in rawItems) {
+      if (rawItem is! Map) {
+        return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
+      }
+
+      final item = Map<String, dynamic>.from(rawItem);
+      final isSevereDanger = item['is_severe_danger'];
+      final rawWarnings = item['warnings'];
+      if (item['raw_name'] is! String ||
+          item['hospital'] is! String ||
+          isSevereDanger is! bool ||
+          rawWarnings is! List) {
+        return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
+      }
+
+      final warnings = <Map<String, dynamic>>[];
+      for (final rawWarning in rawWarnings) {
+        if (rawWarning is! Map) {
+          return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
+        }
+
+        final warning = Map<String, dynamic>.from(rawWarning);
+        if (warning['conflict_target'] is! String ||
+            warning['warning_desc'] is! String ||
+            warning['is_drug_conflict'] is! bool ||
+            warning['is_allergy_conflict'] is! bool) {
+          return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
+        }
+
+        warnings.add(warning);
+      }
+
+      item['warnings'] = warnings;
+      items.add(item);
+    }
+
+    final hasDanger = items.any(_isDangerousSafetyItem);
+    return _SafetyCheckResult(
+      hasDanger ? _SafetyCheckStatus.danger : _SafetyCheckStatus.safe,
+      items,
+    );
+  } catch (e) {
+    debugPrint('Safety API unavailable: $e');
+    return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
+  }
+}
+
+Future<void> _showSafetyUnavailableDialog(BuildContext context) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      title: const Row(
+        children: [
+          Icon(Icons.info_outline, color: Colors.orangeAccent, size: 30),
+          SizedBox(width: 10),
+          Expanded(child: Text('安全檢查未完成')),
+        ],
+      ),
+      content: const Text(
+        '目前無法完成安全檢查，請稍後再試。',
+        style: TextStyle(fontSize: 15, height: 1.5),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('知道了'),
+        ),
+      ],
+    ),
+  );
+}
+
 late List<CameraDescription> cameras;
 
 Future<void> main() async {
@@ -690,10 +809,24 @@ Center( // 👈 1. 在最外層加上 Center
   // 🌟 💡 終極修改：改用 Form-data 傳送，並符合所有欄位名稱
   Future<void> _checkInteractionsAndSave(List<dynamic> drugsData, XFile imageFile) async {
     _showLoadingDialog("正在進行交互作用檢測");
+    bool isLoadingDialogOpen = true;
     
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('user_id');
+
+      if (userId == null) {
+        if (!mounted) return;
+        Navigator.pop(context);
+        isLoadingDialogOpen = false;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('登入資訊已失效，請重新登入後再試。'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+        return;
+      }
 
       // 1. 整理藥品陣列，嚴格對齊規格書要求的欄位
       List<Map<String, dynamic>> confirmedDrugs = drugsData.map((drug) {
@@ -739,40 +872,30 @@ Center( // 👈 1. 在最外層加上 Center
       
       if (!mounted) return;
       Navigator.pop(context); // 關閉載入框
+      isLoadingDialogOpen = false;
 
 if (response.statusCode == 200 || response.statusCode == 201) {
         // 1. 藥單存檔成功了！
         debugPrint('✅ 存檔成功，準備呼叫安全檢查 API...');
         
         // 2. 緊接著打第二支 API：進行總體安全檢查 (這支才會回傳紅綠燈資料)
-        final safetyResponse = await http.post(
-          Uri.parse('$API_BASE_URL/medications/api/check_all_safety/'),
-          headers: {'Content-Type': 'application/json'},
-          body: json.encode({"user_id": userId}),
-        );
+        final safetyResult = await _requestSafetyCheck(userId);
+        if (!mounted) return;
 
-        final safetyData = json.decode(utf8.decode(safetyResponse.bodyBytes));
-        bool hasInteraction = false;
-        String interactionDetails = "請留意藥物使用安全，若有不適請立即停藥。";
-
-        // 3. 判斷安全檢查的結果
-        if (safetyResponse.statusCode == 200 && safetyData['status'] == 'success') {
-          List<dynamic> rawList = safetyData['data'] ?? [];
-          
-          // 過濾出真的有觸發紅燈危險的藥物
-          List<dynamic> actualDangerList = rawList.where((item) {
-            return item['is_severe_danger'] == true;
-          }).toList();
-
-          if (actualDangerList.isNotEmpty) {
-            hasInteraction = true;
-            // 抓出有衝突的藥名顯示在彈窗上
-            List<String> dangerNames = actualDangerList.map((e) => e['raw_name'].toString()).toList();
-            interactionDetails = "衝突藥物包含：\n${dangerNames.join('、')}";
-          }
+        if (safetyResult.status == _SafetyCheckStatus.unavailable) {
+          await _showSafetyUnavailableDialog(context);
+          return;
         }
 
-        // 4. 根據真實的安全檢查結果，決定跳紅燈還是綠燈
+        final actualDangerList = safetyResult.items
+            .where(_isDangerousSafetyItem)
+            .toList();
+        final hasInteraction = safetyResult.status == _SafetyCheckStatus.danger;
+        final interactionDetails = hasInteraction
+            ? "衝突藥物包含：\n${actualDangerList.map((item) => item['raw_name']).join('、')}"
+            : "請留意藥物使用安全，若有不適請立即停藥。";
+
+        // 3. 只有結構完整且明確的安全結果，才顯示紅燈或綠燈
         _showFinalResultDialog(hasInteraction, interactionDetails);
         
       } else {
@@ -781,7 +904,9 @@ if (response.statusCode == 200 || response.statusCode == 201) {
 
     } catch (e) {
       if (!mounted) return;
-      Navigator.pop(context);
+      if (isLoadingDialogOpen) {
+        Navigator.pop(context);
+      }
       debugPrint('❌ 檢測發生錯誤: $e');
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線失敗: $e'), backgroundColor: Colors.redAccent));
     }
@@ -1026,7 +1151,16 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
   Future<void> _checkAllSafety() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     int? userId = prefs.getInt('user_id');
-    if (userId == null) return;
+    if (userId == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('登入資訊已失效，請重新登入後再試。'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
 
     showDialog(
       context: context,
@@ -1034,37 +1168,22 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
       builder: (context) => const Center(child: CircularProgressIndicator(color: Colors.teal)),
     );
 
-    try {
-      final response = await http.post(
-        Uri.parse('$API_BASE_URL/medications/api/check_all_safety/'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({"user_id": userId}),
-      );
-      
-      if (!mounted) return;
-      Navigator.pop(context); 
+    final safetyResult = await _requestSafetyCheck(userId);
+    if (!mounted) return;
+    Navigator.pop(context);
 
-      final data = json.decode(utf8.decode(response.bodyBytes));
-      
-      if (response.statusCode == 200 && data['status'] == 'success') {
-        List<dynamic> rawList = data['data'] ?? [];
-        List<dynamic> actualDangerList = rawList.where((item) {
-          final warnings = item['warnings'] as List?;
-          return warnings != null && warnings.isNotEmpty;
-        }).toList();
-
-        _showSafetyResultDialog(actualDangerList);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('檢查失敗：${data['message']}'), backgroundColor: Colors.redAccent));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線失敗：$e'), backgroundColor: Colors.redAccent));
+    if (safetyResult.status == _SafetyCheckStatus.unavailable) {
+      await _showSafetyUnavailableDialog(context);
+      return;
     }
+
+    final actualDangerList = safetyResult.items
+        .where(_isDangerousSafetyItem)
+        .toList();
+    _showSafetyResultDialog(actualDangerList);
   }
 
-void _showSafetyResultDialog(List<dynamic> dangerList) {
+void _showSafetyResultDialog(List<Map<String, dynamic>> dangerList) {
     if (dangerList.isEmpty) {
       showDialog(
         context: context,
@@ -1450,7 +1569,6 @@ class PrescriptionDetailPage extends StatefulWidget {
 class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
   bool _isLoading = true; // 載入狀態
   List<dynamic> _meds = []; // 用來裝後端傳來的藥品明細
-  bool _hasSevereDanger = false;
 
   @override
   void initState() {
@@ -1482,8 +1600,6 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
           } else {
             _meds = data['data']['medications'] ?? data['data']['drugs'] ?? data['data']['meds'] ?? [];
           }
-          
-          _hasSevereDanger = _meds.any((m) => m['is_severe_danger'] == true);
         });
       }
     } catch (e) {
@@ -1623,9 +1739,9 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
               Container(
                 width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 25),
                 decoration: BoxDecoration(
-                  color: _hasSevereDanger ? Colors.redAccent : Colors.teal,
+                  color: Colors.blueGrey,
                   borderRadius: BorderRadius.circular(15),
-                  boxShadow: [BoxShadow(color: (_hasSevereDanger ? Colors.red : Colors.teal).withOpacity(0.3), spreadRadius: 1, blurRadius: 5, offset: const Offset(0, 3))],
+                  boxShadow: [BoxShadow(color: Colors.blueGrey.withOpacity(0.3), spreadRadius: 1, blurRadius: 5, offset: const Offset(0, 3))],
                 ),
                 child: Center(
                   child: Text(
@@ -1692,7 +1808,6 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                               itemCount: _meds.length,
                               itemBuilder: (context, index) {
                                 final med = _meds[index];
-                                bool _isMedSevere = med['is_severe_danger'] == true;
 
                                 return Container(
                                   margin: const EdgeInsets.only(bottom: 12),
@@ -1724,7 +1839,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                       decoration: BoxDecoration(
                                         color: Colors.white,
                                         borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(color: _isMedSevere ? Colors.redAccent : Colors.grey.shade200, width: _isMedSevere ? 2.0 : 1.0),
+                                        border: Border.all(color: Colors.grey.shade200),
                                         boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 3)],
                                       ),
                                       child: Column(
@@ -1734,19 +1849,15 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                             children: [
                                               Expanded(
-                                                child: Row(
+                                                  child: Row(
                                                   children: [
-                                                    if (_isMedSevere) ...[
-                                                      const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 24),
-                                                      const SizedBox(width: 6),
-                                                    ],
                                                     Expanded(
                                                       child: Text(
                                                         med['raw_name'] ?? '未知藥品', 
-                                                        style: TextStyle(
+                                                        style: const TextStyle(
                                                           fontSize: 18, 
                                                           fontWeight: FontWeight.bold, 
-                                                          color: _isMedSevere ? Colors.redAccent : Colors.black87 
+                                                          color: Colors.black87,
                                                         )
                                                       ),
                                                     ),
@@ -1767,8 +1878,8 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                                 },
                                                 child: Container(
                                                   width: 35, height: 35,
-                                                  decoration: BoxDecoration(color: _isMedSevere ? Colors.red.withOpacity(0.1) : Colors.teal.shade50, shape: BoxShape.circle),
-                                                  child: Center(child: Icon(Icons.info_outline, color: _isMedSevere ? Colors.redAccent : Colors.teal, size: 18)),
+                                                  decoration: BoxDecoration(color: Colors.teal.shade50, shape: BoxShape.circle),
+                                                  child: const Center(child: Icon(Icons.info_outline, color: Colors.teal, size: 18)),
                                                 ),
                                               )
                                             ],
@@ -1781,21 +1892,19 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                             const Divider(),
                                             const SizedBox(height: 4),
                                             ...(med['warnings'] as List).map<Widget>((warn) {
-                                              bool isConflict = warn['is_drug_conflict'] == true;
                                               return Padding(
                                                 padding: const EdgeInsets.only(top: 4.0),
                                                 child: Row(
                                                   crossAxisAlignment: CrossAxisAlignment.start,
                                                   children: [
-                                                    Icon(Icons.gpp_maybe, size: 16, color: isConflict ? Colors.redAccent : Colors.orange),
+                                                    const Icon(Icons.gpp_maybe, size: 16, color: Colors.orange),
                                                     const SizedBox(width: 4),
                                                     Expanded(
                                                       child: Text(
                                                         '【${warn['conflict_target']}】${warn['warning_desc']}',
-                                                        style: TextStyle(
+                                                        style: const TextStyle(
                                                           fontSize: 12,
-                                                          color: isConflict ? Colors.redAccent : Colors.black87,
-                                                          fontWeight: isConflict ? FontWeight.bold : FontWeight.normal,
+                                                          color: Colors.black87,
                                                         ),
                                                       ),
                                                     ),
@@ -2004,6 +2113,19 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
   Future<void> _saveReminders() async {
     if (_selectedPrescriptionId == null || _drugs.isEmpty) return;
 
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getInt('user_id');
+    if (!mounted) return;
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('登入資訊已失效，無法儲存提醒。請重新登入後再試。'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
     final pid = _selectedPrescriptionId;
     List<Map<String, dynamic>> drugsPayload = [];
 
@@ -2031,6 +2153,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
     });
 
     final payload = {
+      "user_id": userId,
       "prescription_id": pid,
       "drugs": drugsPayload
     };
