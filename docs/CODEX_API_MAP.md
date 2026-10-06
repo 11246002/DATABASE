@@ -1,169 +1,115 @@
-# Reverse-engineered API map
+# Current API map
 
-Base URL is supplied by Flutter's `API_BASE_URL`. Root Django prefixes are `/accounts/` and `/medications/`. No query parameters are implemented by any application endpoint. JSON calls use `Content-Type: application/json`; multipart calls let `http.MultipartRequest` set the boundary. No endpoint requires or validates an authentication header.
+Incremental audit date: 2026-10-06 (Asia/Taipei). Git comparison: `1032f3e` (pre-sync baseline) to `ed3fadc` (current integration `HEAD`). This map is based on current Flutter call sites, Django URL patterns, and handler source. Runtime execution was unavailable because no Python interpreter is installed.
 
-Coverage definition used by the audit:
+## Coverage summary
 
-- Backend application endpoints: **19** (admin excluded).
+- Backend application URL patterns: **27** (7 accounts + 20 medications; Django admin excluded).
 - Flutter HTTP call sites: **18**.
-- Unique frontend endpoints: **15**.
-- Unique frontend endpoints matched to backend: **15**.
-- Backend-only/unmatched endpoints: **4** (three group APIs and taking-history record).
-- Frontend-only/unmatched endpoints: **0**.
+- Flutter unique endpoint patterns: **15**.
+- Frontend paths resolving to backend routes: **15/15**.
+- Frontend contracts currently usable as written: **14/15**. The existing reminder-save caller does not provide the newly required identity value.
+- Backend-only URL patterns: **12**: three group routes, reminder list, two reminder-today variants, reminder delete, reminder toggle, history record, two history-stats variants, and Health Bank sync.
+- No Flutter-only route was found.
+
+`API_BASE_URL` remains `http://172.20.10.4:8000`. The merge retained the local value; the team-side `127.0.0.1` value was not adopted.
+
+## Authentication and ownership convention
+
+Most legacy endpoints remain unauthenticated and trust a body/path `user_id` or resource ID. The new reminder/history handlers call `get_authenticated_user_id`, which accepts any of:
+
+- `Authorization: Bearer session_token_<user_id>`;
+- `Authorization: Bearer <numeric-user-id>`;
+- `X-User-Id`;
+- body/query/form `user_id`.
+
+This improves owner filtering inside those handlers, but it is not authentication: the token is deterministic and no credential/session/token record is verified. Health Bank sync accepts body/query `user_id` only. Existing account, prescription, safety, and group handlers did not adopt this helper.
 
 ## Accounts endpoints
 
-### POST `/accounts/api/register/`
+| Method and path | Flutter caller | Current contract and ownership |
+|---|---|---|
+| `POST /accounts/api/register/` | `RegisterPage._register` | JSON account/profile fields; 201 with `user_id`. The required UI “real name” still has no API/model field. |
+| `POST /accounts/api/login/` | `LoginPage._login` | JSON credentials; returns user data and deterministic `session_token_<id>`. |
+| `POST /accounts/api/user/profile/` | `UserProfilePage._fetchUserProfile` | Body `user_id`; returns profile. Caller-controlled identity. |
+| `POST /accounts/api/user/update/` | `UserProfilePage._updateProfile` | Body `user_id` plus patch fields. Caller-controlled identity. |
+| `POST /accounts/api/group/create/` | None | Body `user_id`, `group_name`; creates group and owner row. No real authentication; writes are not atomic. |
+| `POST /accounts/api/group/join/` | None | Body `user_id`, `invite_code`; application-level duplicate check, then creates membership. |
+| `POST /accounts/api/group/members/` | None | Body `user_id`, `group_id`; checks submitted user is a member, but does not authenticate that identity. |
 
-- Frontend caller: `RegisterPage._register`; backend: `accounts.views.register_api`.
-- Request JSON: required `user_name: string`, `password: string`; optional `nickname: string|null`, `gender: string|null`, `height: number|null`, `weight: number|null`, `allergies: string|null`, `emergency_contact_phone: string|null`. Flutter additionally requires a local “real name” but sends no such key.
-- Success: 201 `{status, message, user_id}`. Errors: 400 missing credentials or duplicate name; 500 exception. Unsupported methods fall through without a response.
-- DB: reads/creates `User`; password is hashed through `UserManager.create_user`.
-- Auth/status/conflict: public by design, no CSRF. Frontend accepts 200 or 201 and does not verify response `status`; real-name field has no backend/model equivalent.
+The three group routes are unchanged at the API layer. `GroupMember` now declares a model constraint, but no migration creates it, so the join route still relies on its race-prone pre-check in the current database.
 
-### POST `/accounts/api/login/`
+## Existing medication/prescription endpoints
 
-- Frontend caller: `LoginPage._login`; backend: `accounts.views.login_api`.
-- Request JSON: `user_name: string`, `password: string`; neither is explicitly validated before lookup/check.
-- Success: 200 `{status:'success', message, data:{user_id,user_name,role,nickname,token}}`. Errors: 404 unknown user, 401 wrong password, 500 exception. Unsupported methods fall through.
-- DB: reads `User`; no session/token row is created.
-- Auth/status/conflict: public. `token` is deterministic placeholder text; Flutter stores it but never sends it.
+| Method and path | Flutter caller | Incremental status |
+|---|---|---|
+| `POST /medications/api/scan/` | Scan sheet | Same multipart field `prescription_img`. OCR prompt now asks for multiple space-separated search names. |
+| `POST /medications/api/confirm_and_save/` | Scan sheet | Same multipart contract. Search now tries each keyword against Chinese name, English name, and ingredient. An unmatched drug no longer attempts to create a warning with `drug=NULL`. |
+| `GET /medications/api/prescriptions/{user_id}/` | Bag and reminder pages | Same list response and no authentication. `image_url` now uses configured `/media/`, but existing root-level files were not moved. |
+| `GET /medications/api/prescription_details/{prescription_id}/` | Detail and reminder pages | Same list response, no ownership check, and still omits `is_severe_danger` even though Flutter reads it. |
+| `POST /medications/api/prescriptions/create/` | Bag | Same JSON contract and no ownership authentication. |
+| `POST|PUT /medications/api/prescriptions/{id}/update/` | Bag uses POST | Same contract; no ownership check. |
+| `POST /medications/api/prescriptions/{id}/add_drug/` | Detail | Same contract. Integer extraction still truncates fractional text. |
+| `POST|DELETE /medications/api/prescriptions/{id}/delete/` | Bag uses POST | Same contract; no ownership check. ORM cascade still removes reminders/taking records, and the image file is not removed. |
+| `POST|DELETE /medications/api/prescriptions/drug/{id}/delete/` | Detail uses POST | Same contract; no ownership check and cascades reminder/history rows. |
+| `POST /medications/api/check_all_safety/` | Scan follow-up and bag | Body `user_id`. Response still returns every current drug with `is_severe_danger` and warnings. It now also queries Health Bank allergy/history tables and may add `source` plus history IDs. Against the current unmigrated SQLite database this endpoint will fail because those tables do not exist. |
 
-### POST `/accounts/api/user/profile/`
+## Reminder and taking-history endpoints
 
-- Frontend caller: `UserProfilePage._fetchUserProfile`; backend: `get_user_profile_api`.
-- Request JSON: required `user_id: integer`.
-- Success: 200 data with `user_id`, `user_name`, `nickname`, `gender`, `height`, `weight`, `allergies`, `emergency_contact_phone`. Errors: 400 missing/invalid JSON, 404 user missing, 500; 405 other methods.
-- DB: reads `User`.
-- Auth/conflict: none; caller-provided user ID controls whose profile is returned.
+### `POST /medications/api/reminders/set/`
 
-### POST `/accounts/api/user/update/`
+Required JSON: `user_id`, `prescription_id`, and `drugs[]`; each drug has `prescription_drug_id` and `reminders[]` containing `frequency_tag`, `remind_time`, and optional `is_active`.
 
-- Frontend caller: `UserProfilePage._updateProfile`; backend: `update_user_profile_api`.
-- Request JSON: required `user_id: integer`; optional patch keys `nickname`, `gender`, `height`, `weight`, `allergies`, `emergency_contact_phone`.
-- Success: 200 data only includes `user_id`, `user_name`, `nickname`. Errors: 400 missing ID/invalid JSON, 404, 500; 405 other methods.
-- DB: updates `User`.
-- Auth/conflict: none; caller can update any known user ID. Types/ranges are not validated beyond ORM conversion.
+- Verifies that the prescription belongs to the asserted user.
+- Uses `update_or_create(prescription_drug, frequency_tag)` and disables omitted tags for each submitted drug.
+- Returns 201 when rows are created, otherwise 200 for updates, with created/updated counts.
+- Current Flutter caller omits `user_id` and sends no identity header, so the implemented app receives **401** before saving.
+- Current SQLite also lacks `Remind.is_active`; even a corrected request cannot run until migrations are reconciled/applied.
 
-### POST `/accounts/api/group/create/`
+### `GET /medications/api/reminders/list/`
 
-- Frontend caller: none; backend: `create_group_api`.
-- Request JSON: required `user_id: integer`, `group_name: string`.
-- Success: 201 data with `group_id`, `group_name`, six-character `invite_code`. Errors: 400 missing fields, 404 user, 500; unsupported methods fall through.
-- DB: reads `User`; creates `Group` and owner `GroupMember` in separate, non-atomic writes.
-- Auth/conflict: no authentication; no Flutter consumer.
+Required query: `prescription_id` and asserted identity; optional `active_only`. Returns reminder ID, drug ID/name, tag/time, active/expired state, and start/end dates. No Flutter caller.
 
-### POST `/accounts/api/group/join/`
+### `GET|POST /medications/api/reminders/today/`
 
-- Frontend caller: none; backend: `join_group_api`.
-- Request JSON: required `user_id: integer`, `invite_code: string`.
-- Success: 201 data with group ID/name. Errors: 400 missing/already joined, 404 user or invite code, 500; unsupported methods fall through.
-- DB: reads `User`/`Group`/`GroupMember`, creates member row.
-- Auth/conflict: no authentication; no Flutter consumer; duplicate protection is application-only.
+Also routed as `/today/{user_id}/`. Accepts asserted identity, optional `date` and `active_only` (default true). Returns the selected day's schedule, taking status, drug quantities including `remaining_amount`, and prescription/date metadata. No Flutter caller.
 
-### POST `/accounts/api/group/members/`
+### `DELETE|POST /medications/api/reminders/{remind_id}/delete/`
 
-- Frontend caller: none; backend: `get_group_members_api`.
-- Request JSON: required `user_id: integer`, `group_id: integer`.
-- Success: 200 data with group ID/name and member objects (`user_id`, `user_name`, display `nickname`, `group_role`, formatted `joined_at`). Errors: 400 missing/invalid JSON, 404 group, 403 requester not a member, 500; 405 other methods.
-- DB: reads `Group`, `GroupMember`, related `User`.
-- Auth/conflict: membership is checked, but requester identity is still an unverified body value; no Flutter consumer.
+Owner-filters using the asserted identity and sets `is_active=false`; it does not delete the row. No Flutter caller.
 
-## Medication endpoints
+### `POST|PATCH|PUT /medications/api/reminders/{remind_id}/toggle/`
 
-### POST `/medications/api/scan/`
+Owner-filters using the asserted identity. Optional `is_active`; otherwise toggles. No Flutter caller.
 
-- Frontend caller: `ScanPrescriptionSheet._uploadAndAnalyze`; backend: `analyze_prescription_api`.
-- Multipart request: required file `prescription_img`; no JSON/body fields.
-- Success: 200 `{status:'success', data:[{raw_name,search_keyword,frequency,days,total_amount}, ...]}` as expected by Flutter. Errors: 400 missing file or empty/failed parsed list; 405 other methods. Uncaught AI exceptions are converted to an empty list by helper.
-- External/DB: Pillow + Gemini vision; no DB write.
-- Auth/conflict: none. File size/type is not validated; actual Gemini JSON list shape needs live verification.
+### `POST /medications/api/history/record/`
 
-### POST `/medications/api/confirm_and_save/`
+Required: asserted identity, `remind_id`, and status exactly `已吃` or `略過`. Optional: `force`, `record_date`/`date`, and `actual_taken_at`.
 
-- Frontend caller: `ScanPrescriptionSheet._checkInteractionsAndSave`; backend: `confirm_and_save_prescription_api`.
-- Multipart request: required text field `data` containing JSON; optional file `prescription_img` in backend (always sent by Flutter). JSON requires a usable `user_id`; optional/defaulted `hospital_name`, `visit_date`, `confirmed_drugs`. Each drug may contain `raw_name`, `search_keyword`, `frequency`, `days`, `total_amount`.
-- Success: 200 `{status,message,data:[report...]}`. Each report includes submitted fields, catalog fields (`license`, `med_ch`, `element`, `indications`, `dosage_form`, appearance flags), `fda_result`, and saved `id`. Errors: 400 missing/invalid `data`; 404 user; 500 main/detail/warning/general failures; 405 other methods.
-- DB/external: reads `User`/`Drug`/`DrugWarning`; creates `Prescription`, `PrescriptionDrug`, possibly `DrugWarning`; saves image; may call OpenFDA and Gemini.
-- Auth/conflict: none. Not atomic; integer extraction loses decimals; warning creation can fail for null matched drug; Flutter checks only HTTP status and ignores returned report.
+- One `TakingRecord` per reminder/date is intended.
+- `已吃` decrements `PrescriptionDrug.remaining_amount`; changing from/to `已吃` adjusts it back or forward.
+- Same-status duplicate is rejected unless `force=true`.
+- No Flutter caller. Current SQLite lacks `record_date`, so this handler cannot run against it.
 
-### GET `/medications/api/prescriptions/{user_id}/`
+### `GET /medications/api/history/stats/`
 
-- Frontend callers: medication bag and reminder page; backend: `get_user_prescriptions_api`.
-- Path: `user_id: integer`; no body/query.
-- Success: 200 list of `{prescription_id,hospital_name,visit_date:'YYYY-MM-DD',drug_count,image_url}`; 500 exception. Unsupported methods fall through.
-- DB: reads `Prescription`, counts `PrescriptionDrug` per row.
-- Auth/conflict: none; arbitrary user ID can be enumerated. `image_url` depends on incomplete media configuration.
+Also routed as `/stats/{user_id}/`. Accepts asserted identity plus optional `days`, `start_date`, `end_date`. Returns summary counts/rate/rating, daily statistics, and up to 30 recent records. No Flutter caller.
 
-### GET `/medications/api/prescription_details/{prescription_id}/`
+## Health Bank endpoint
 
-- Frontend callers: prescription detail and reminder page; backend: `get_prescription_detail_api`.
-- Path: `prescription_id: integer`; no body/query.
-- Success: 200 list of `{id,raw_name,med_ch,med_en,frequency,total_amount,days,indications,warnings:[{conflict_target,warning_desc}]}`. Unknown prescription returns an empty success list. Errors: 500; unsupported methods fall through.
-- DB: reads `PrescriptionDrug`, related `Drug`, `DrugWarning`.
-- Auth/conflict: no existence/ownership check. Backend omits `is_severe_danger`, which Flutter attempts to read.
+### `POST /medications/api/v1/health-bank/sync/`
 
-### POST `/medications/api/prescriptions/create/`
+Accepts body or query `user_id`; returns `synced_medications` and `synced_allergies`. It currently writes one fixed mock medication and one fixed allergy through `update_or_create`, then appends an annotated allergy entry to `User.allergies` after removing negative placeholders such as `無`.
 
-- Frontend caller: `MyMedicationBagPage._createManualPrescription`; backend: `create_manual_prescription_api`.
-- Request JSON: `user_id: integer`; optional `hospital_name` (default `手動新增藥單`), `visit_date` (default now).
-- Success: 200 `{status:'success',prescription_id}`. Any error, including missing user/bad date, is 500. Unsupported methods fall through.
-- DB: reads `User`, creates `Prescription`.
-- Auth/conflict: none; no explicit validation or 404 distinction.
+- No real SDK/OAuth/token integration exists.
+- No Flutter caller exists.
+- The API specification's cURL example omits the required `user_id` and would receive 400.
+- The handler requires new tables that are absent from the current SQLite database.
 
-### POST `/medications/api/prescriptions/{prescription_id}/add_drug/`
+## Confirmed contract conflicts
 
-- Frontend caller: `PrescriptionDetailPage._addSingleDrug`; backend: `add_single_drug_api`.
-- Request JSON: required nonblank `raw_name`; optional/defaulted `frequency`, `days`, `total_amount`.
-- Success: 200 with one report item in `data`. Errors: 400 blank name, 500, 405 other methods.
-- DB/external: reads matched `Drug`/warnings; may call OpenFDA/Gemini; creates `PrescriptionDrug` and warnings.
-- Auth/conflict: no prescription existence/ownership check before create; numeric text is coerced with first-integer extraction.
-
-### POST or PUT `/medications/api/prescriptions/{prescription_id}/update/`
-
-- Frontend caller: bag uses POST; backend: `update_prescription_api`.
-- Request JSON: optional `hospital_name`, optional `visit_date` string. An invalid date is silently ignored.
-- Success: 200 with updated hospital/date. Errors: 404 prescription, 400 invalid JSON, 500; 405 other methods.
-- DB: updates `Prescription`.
-- Auth/conflict: no ownership check.
-
-### POST or DELETE `/medications/api/prescriptions/{prescription_id}/delete/`
-
-- Frontend caller: bag uses POST; backend: `delete_prescription_api`.
-- Request: path ID only.
-- Success: 200 status/message. Errors: 404, 500. Unsupported methods fall through.
-- DB: deletes `Prescription`; ORM cascades child drugs/reminders/history.
-- Auth/conflict: no ownership check; stored image file is not deleted; Flutter optimistically removes list row before result.
-
-### POST or DELETE `/medications/api/prescriptions/drug/{pd_id}/delete/`
-
-- Frontend caller: detail uses POST; backend: `delete_single_drug_api`.
-- Request: path `pd_id` only.
-- Success: 200 status/message. Errors: 404, 500. Unsupported methods fall through.
-- DB: deletes `PrescriptionDrug`; ORM cascades reminders/history.
-- Auth/conflict: no ownership check.
-
-### POST `/medications/api/check_all_safety/`
-
-- Frontend callers: scan-save follow-up and bag safety button; backend: `check_all_medications_safety_api`.
-- Request JSON: required `user_id: integer`.
-- Success: 200 list of every user drug with prescription/drug IDs, names, hospital, `is_severe_danger`, and warning objects including allergy/drug-conflict flags and conflicting names/IDs. Errors: 400 missing ID, 404 user, 500; 405 other methods.
-- DB: reads `User`, all related `PrescriptionDrug`/`Drug`/`Prescription`, and `DrugWarning`.
-- Auth/conflict: no authentication. Clinical result is based on unvalidated substring matching.
-
-### POST `/medications/api/reminders/set/`
-
-- Frontend caller: `ReminderSettingsPage._saveReminders`; backend: `reminders.set_medication_reminder`.
-- Request JSON: `prescription_id: integer`, optional `drugs: list`; each item contains `prescription_drug_id` and optional `reminders`, each with `frequency_tag` and `remind_time` (`HH:MM:SS` from Flutter).
-- Success: 201 status/message containing created count. Errors: 404 prescription, 400 other exceptions; 405 other methods.
-- DB: reads `Prescription`/`PrescriptionDrug`; creates `Remind` rows.
-- Auth/conflict: no ownership check; invalid drug IDs are silently skipped; empty list succeeds; repeated submissions duplicate reminders.
-
-### POST `/medications/api/history/record/`
-
-- Frontend caller: none; backend: `history.record_taking_status`.
-- Request JSON: required `remind_id: integer`, `status: string` (comment examples: `已吃`, `略過`).
-- Success: 201 data with `takingrecord_id`, echoed status, and formatted server time. Errors: 400 missing/parse/other, 404 reminder; 405 other methods.
-- DB: reads `Remind`, creates `TakingRecord` with `timezone.now()`.
-- Auth/conflict: no authentication/ownership or status enum validation; no Flutter consumer.
-
+1. Reminder save route exists but the current Flutter request lacks the newly required identity field/header (401).
+2. Prescription detail still omits `is_severe_danger` read by Flutter.
+3. New backend-only flows have no Flutter screens/callers: group, reminder retrieval/toggle/delete/today, taking record/statistics, and Health Bank sync.
+4. The reminder API spec describes the deterministic token parser as authentication; it only extracts a user ID and can be forged.
+5. Current source contracts depend on unapplied schema changes, so route coverage does not imply runtime availability.

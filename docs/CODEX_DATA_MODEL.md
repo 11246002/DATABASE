@@ -1,76 +1,30 @@
-# Data model
+# Current data model and migration state
 
-Primary source: current models and migrations. Verification source: read-only SQLite schema inspection on 2026-10-06. All four project migrations are recorded as applied.
+Incremental audit date: 2026-10-06. Sources: models, migration graph, and read-only SQLite inspection. No migration or database write was performed.
 
-## Entities
+## Current source models
 
-### `accounts.User` / `accounts_user` (37 rows)
+### Accounts
 
-| Field | Type | Null/default/constraint |
-|---|---|---|
-| `user_id` | AutoField / INTEGER | Primary key. |
-| `user_name` | varchar(50) | Required, unique (auto unique index). Login identifier. |
-| `password` | varchar(128) | Required hashed password from `AbstractBaseUser`. |
-| `last_login` | datetime | Nullable. |
-| `role` | varchar(20) | Model default `user`; `sys_admin` drives staff/superuser properties. |
-| `nickname` | varchar(50) | Nullable/blank. |
-| `gender` | varchar(2) | Nullable/blank. |
-| `height`, `weight` | REAL | Nullable/blank. |
-| `allergies` | TEXT | Nullable/blank. |
-| `emergency_contact_phone` | varchar(20) | Nullable/blank. |
-| `created_at` | datetime | Required, `auto_now_add`. |
+- `User`: unchanged custom user with profile fields and text `allergies`.
+- `Group`: unchanged group/invite-code model.
+- `GroupMember`: now declares `UniqueConstraint(fields=['group','user'], name='unique_group_member')`.
 
-### `accounts.Group` / `accounts_group` (2 rows)
+### Medication and prescription
 
-`group_id` AutoField PK; required `group_name` varchar(100); required auto-created `created_at`; required unique `invite_code` varchar(10).
+- `Drug`: `license` is now declared `unique=True`; other catalog fields are unchanged.
+- `Prescription`, `PrescriptionDrug`, `DrugWarning`: structurally unchanged.
+- `Remind`: adds `is_active`; derives `start_date`, `end_date`, and `is_expired`; declares uniqueness on `(prescription_drug, frequency_tag)`; direct `delete()` performs a soft delete unless `force=True`.
+- `TakingRecord`: adds `record_date`, defaults `taken_at`, and declares uniqueness on `(remind, record_date)`.
 
-### `accounts.GroupMember` / `accounts_groupmember` (4 rows)
+### Health Bank
 
-Implicit `id` PK; required FKs `group -> Group` and `user -> User`, both model-level CASCADE; `joined_at` auto-created; `group_role` varchar(20), model default `member`. FK indexes exist. There is no unique constraint preventing duplicate `(group, user)` rows; the join API enforces it procedurally.
+- `MedicationHistory`: `history_id`, nullable `user`, `drug_code`, `drug_name`, `dosage`, `frequency`, `days`, `hosp_name`, `rx_date`, `synced_at`.
+- `PatientAllergy`: `allergy_id`, nullable `user`, `allergen_name`, nullable `reaction`, `synced_at`.
 
-### `medications.Drug` / `medications_drug` (66,169 rows)
+`MedicationHistory` is Health Bank medication data; it is not the same concept as `TakingRecord`, which records whether a scheduled reminder was taken or skipped.
 
-Implicit BigAutoField PK; required `license` varchar(100) and `med_ch` varchar(100); nullable `med_en`, `color`, `shape`, `indications`, `element`, and `dosage_form`. No uniqueness or explicit search index exists on license/name fields.
-
-### `medications.Prescription` / `medications_prescription` (45 rows)
-
-`prescription_id` AutoField PK; required FK `user -> User` with model-level CASCADE and index; required `hospital_name` varchar(50); required `visit_date` DateTimeField; nullable `image` varchar(100) path using `prescriptions/` upload prefix.
-
-### `medications.PrescriptionDrug` / `medications_prescriptiondrug` (204 rows)
-
-Implicit BigAutoField PK; required FK `prescription -> Prescription` with CASCADE/index; nullable FK `drug -> Drug` with SET_NULL/index; required `raw_name` varchar(255), `total_amount` integer, `frequency` varchar(20), `days` integer; nullable `remaining_amount` integer. No uniqueness constraint exists.
-
-### `medications.DrugWarning` / `medications_drugwarning` (47 rows)
-
-`warning_id` AutoField PK; required indexed FK `drug -> Drug` with CASCADE; required `conflict_target` varchar(255) and `warning_desc` text. `get_or_create` is used in code, but the database has no unique constraint on `(drug, conflict_target)`.
-
-### `medications.Remind` / `medications_remind` (145 rows)
-
-`remind_id` AutoField PK; required indexed FK `prescription_drug -> PrescriptionDrug` with CASCADE; required `frequency_tag` varchar(50) and `remind_time` time. There is no uniqueness constraint, active flag, or update timestamp.
-
-### `medications.TakingRecord` / `medications_takingrecord` (0 rows)
-
-`takingrecord_id` AutoField PK; required indexed FK `remind -> Remind` with CASCADE; required `status` varchar(20) and `taken_at` datetime. Status has no enum/check constraint.
-
-### Orphaned migrated entity: `medications_medicationreminder` (0 rows)
-
-Migration `0002_medicationreminder` and SQLite define: implicit BigAutoField `id`, required `medication_name` varchar(100), `reminder_time` time, `is_active` bool (migration default true), `created_at`, and indexed FK `user -> User`. The class is absent from current `models.py`, so ORM/runtime code cannot use it.
-
-## Verified reminder implementation matrix
-
-| Evidence | `Remind` | `MedicationReminder` |
-|---|---|---|
-| Current Django model | Yes: `medications.models.Remind`. | No current model class. |
-| Migration | Created by `medications/0001_initial.py`. | Created by `medications/0002_medicationreminder.py`. |
-| Actual SQLite table | `medications_remind`, 145 rows. | `medications_medicationreminder`, 0 rows. |
-| Backend writes | `set_medication_reminder` creates rows. | None found. |
-| Backend reads | `record_taking_status` resolves `Remind`; admin registers it; ORM cascades through `TakingRecord`. | None found; not registered in admin. |
-| Flutter dependency | Direct: reminder screen POSTs `/medications/api/reminders/set/`, whose implementation writes `Remind`. | None found. |
-| Effect if removed now | Breaks reminder saving, reminder-to-taking-history lookup, admin access, and cascaded `TakingRecord` relationship; Flutter reminder flow would fail. | No current runtime caller would fail based on repository evidence, but deleting the table/migration state is a schema decision and could affect unknown external/older clients. |
-
-This matrix does not choose which concept should remain. The SQLite file hash was unchanged across the read-only verification.
-
-## Relationships
+## Intended relationships
 
 ```text
 User 1--* Prescription 1--* PrescriptionDrug *--0..1 Drug 1--* DrugWarning
@@ -80,13 +34,71 @@ User 1--* Prescription 1--* PrescriptionDrug *--0..1 Drug 1--* DrugWarning
                             Remind 1--* TakingRecord
 
 User 1--* GroupMember *--1 Group
-User 1--* MedicationReminder   (migration/DB only)
+User 1--* MedicationHistory
+User 1--* PatientAllergy
 ```
 
-## Model / migration / SQLite comparison
+## New migration graph
 
-- Migrations and actual SQLite agree on all existing table columns, FKs, and indexes inspected.
-- `medications.0002_medicationreminder` is applied and its table exists, but the model has been removed from source. A future migration generated from current models would likely propose deleting it.
-- `accounts.0002` changes `GroupMember.id` to `BigAutoField`, while the current `AccountConfig`/settings do not declare `default_auto_field` and the model does not declare `id`. This may produce model-state drift depending on the Django version; verify with `makemigrations --check --dry-run` in a configured Python environment.
-- Django 6.0.4 generated two migrations, while `requirements.txt` pins Django 5.2.13.
-- SQLite reports FK actions as `NO ACTION`; Django's CASCADE/SET_NULL behavior is implemented by ORM deletion collection rather than matching SQL `ON DELETE` clauses in this database.
+Accounts:
+
+- `0003_alter_groupmember_id`: changes `GroupMember.id` from the prior migration state back to `AutoField`, matching the current accounts app default.
+- Missing: no migration adds `unique_group_member`.
+
+Medications has parallel branches after `0002_medicationreminder`:
+
+- `0003_medicationhistory_patientallergy_and_more`: creates `MedicationHistory` and `PatientAllergy`, then deletes `MedicationReminder`.
+- `0003_remind_is_active_delete_medicationreminder`: despite its filename, only adds `Remind.is_active`; it contains no delete operation.
+- `0004`: adds `TakingRecord.record_date`, changes `taken_at` default, and adds `(remind, record_date)` uniqueness.
+- `0005`: adds `(prescription_drug, frequency_tag)` uniqueness to `Remind`.
+- `0006_merge_20260920_0033`: merges the two branches.
+
+Missing: no migration changes `Drug.license` to unique.
+
+## Actual SQLite state
+
+Only these project migrations are recorded as applied:
+
+- `accounts.0001_initial`
+- `accounts.0002_alter_groupmember_id`
+- `medications.0001_initial`
+- `medications.0002_medicationreminder`
+
+Consequences:
+
+- `medications_medicationhistory` and `medications_patientallergy` do not exist.
+- `medications_remind` has no `is_active` column.
+- `medications_takingrecord` has no `record_date` column.
+- Reminder/day and reminder-tag unique constraints do not exist.
+- `medications_medicationreminder` still exists and has 0 rows.
+- `medications_remind` has 145 rows; `medications_takingrecord` has 0 rows.
+- `GroupMember(group,user)` and `Drug.license` are not unique in actual schema.
+
+## Data migration blocker
+
+Read-only duplicate checks found:
+
+| Intended unique key | Duplicate groups | Excess rows |
+|---|---:|---:|
+| `GroupMember(group,user)` | 0 | 0 |
+| `Drug.license` | 0 | 0 |
+| `Remind(prescription_drug,frequency_tag)` | 14 | 14 |
+| `TakingRecord(remind,day)` | 0 | 0 |
+
+Migration `medications.0005` attempts to add reminder-tag uniqueness without a preceding cleanup/data migration. With the present database, applying the chain is expected to fail at that constraint. The audit did not choose which duplicate reminder rows to retain.
+
+## Reminder implementation status
+
+| Evidence | `Remind` | Legacy `MedicationReminder` |
+|---|---|---|
+| Current model | Active and expanded. | Absent. |
+| Migration intent | Adds active state and uniqueness. | Deleted by one `0003` branch. |
+| Actual SQLite | Old schema, 145 rows. | Table still present, 0 rows. |
+| Current backend | All reminder/history flows depend on it. | No caller. |
+| Current Flutter | Save route only. | No caller. |
+
+The canonical source concept is now clearly `Remind`, resolving the earlier source-level ambiguity. The local database has not reached that migration state.
+
+## Cascade and history caveat
+
+Soft deletion preserves history only when the reminder endpoint explicitly sets `is_active=false` or an individual instance calls its override. Parent deletion of `Prescription` or `PrescriptionDrug` still uses ORM cascade collection and can delete `Remind` and `TakingRecord`; the override does not make the full relationship chain soft-delete-safe.

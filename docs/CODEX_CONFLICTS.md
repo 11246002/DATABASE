@@ -1,80 +1,73 @@
-# Confirmed conflicts and technical uncertainties
+# Confirmed conflicts after team-main integration
 
-This file records findings only. No production code, API, migration, or database was changed.
+Incremental comparison: `1032f3e..ed3fadc`, audited 2026-10-06. Findings are classified against the original `CODEX_CONFLICTS.md`. No production code or data was changed.
 
-## Authentication and authorization
+## Resolved or materially improved
 
-1. **Placeholder token vs no backend authentication.** Login returns `session_token_<user_id>` and Flutter stores it, but no later call sends it and no backend handler validates it.
-2. **Caller-controlled identity.** Profile, prescription listing/creation, and safety endpoints trust `user_id`. Prescription/detail/update/delete/drug/reminder/history endpoints trust resource IDs without ownership checks. A caller can access or mutate another user's data if IDs are known.
-3. **Logout state mismatch.** Flutter navigates to login but leaves saved `user_id` and token intact.
-4. **CSRF/CORS/development exposure.** All APIs are CSRF-exempt while CORS, hosts, and debug are broadly open.
+1. **Unmatched-drug warning failure:** confirm/save now creates `DrugWarning` only when a matched `Drug` exists, removing the prior `drug=None` failure path.
+2. **Drug lookup coverage:** multi-word OCR search keys are tried individually against Chinese name, English name, and ingredient.
+3. **GroupMember ID model-state drift:** `accounts.0003` restores `AutoField`, matching current model/default behavior.
+4. **Media configuration absent:** development `MEDIA_ROOT`, `MEDIA_URL`, and URL serving now exist. Existing files are not relocated, so a replacement conflict is listed below.
+5. **Reminder concept decision in source:** `Remind` is the active model and the migration graph now intends to delete legacy `MedicationReminder`.
+6. **Reminder duplicate creation in source logic:** set now uses update-or-create and a model/migration uniqueness rule instead of always appending. This is not operationally complete because current data blocks the migration.
+7. **Reminder/history ownership filtering:** these new handlers filter objects by the asserted user. This reduces accidental IDOR but is not secure authentication because identity remains forgeable.
 
-### Verified current authentication flow
+## Old conflicts still present
 
-```text
-Register JSON
-  -> UserManager.create_user
-  -> password hash stored
+### Authentication and ownership
 
-Login JSON
-  -> User lookup + check_password
-  -> deterministic "session_token_<user_id>" returned
-  -> Flutter stores user_id and token in SharedPreferences
-  -> later Flutter calls read/send user_id only
-  -> Authorization/Bearer header: absent
-  -> backend token/session verification: absent
-  -> general ownership validation: absent
-  -> logout: route replacement only; stored values are not cleared
-```
+- Login token remains deterministic and unvalidated; Flutter stores it but sends it nowhere.
+- Most endpoints trust caller-controlled user/resource IDs and lack ownership checks.
+- Logout does not clear SharedPreferences.
+- APIs remain CSRF-exempt with open development hosts/CORS/debug settings.
+- Reminder/history “authentication” merely parses a claimed ID from token/header/body/query.
 
-The group-members endpoint checks membership using the submitted `user_id`, but it does not authenticate that the caller owns that ID.
+### Frontend/backend contract
 
-## Frontend/backend contract
+- Prescription detail still omits `is_severe_danger` used by Flutter.
+- Fractional amounts are still truncated by `extract_int` before integer storage.
+- Registration real-name UI still has no request/model field.
+- Several legacy handlers can still fall through on unsupported methods.
+- Group and taking-history features still have no Flutter consumers; the new backend additions widen this gap.
 
-1. **Detail danger flag mismatch is a real, flow-specific contract bug.** `check_all_safety` returns `is_severe_danger`, and the post-scan safety dialog correctly consumes it. By contrast, `get_prescription_detail_api` returns warnings but not `is_severe_danger`, while `PrescriptionDetailPage._fetchPrescriptionDetails`, its header, and each medication card read that field. Those detail-page reads therefore always evaluate false with the current response. The field is not globally dead; it is missing only from the detail response flow.
-2. **Fractional amount loss is deterministic.** Flutter preserves manual/OCR `total_amount` as text and JSON preserves it. The first lossy layer is `medications.utils.extract_int`, called by `confirm_and_save_prescription_api` and `add_single_drug_api`. Its first `\d+` match makes `0.5 -> 0` and `1.5 -> 1`, then `PrescriptionDrug.total_amount` stores that integer. The immediate save/add response is assembled from the original request text, but Flutter ignores it and refetches; `get_prescription_detail_api` then returns the truncated database integer for display.
-3. **Registration “real name” mismatch.** UI requires a real name, but there is no request/model field for it; it is used only as a nickname fallback.
-4. **Unsupported-method behavior.** Register, login, group create/join, prescription list/detail/create, and delete handlers can fall through without an `HttpResponse`, instead of returning their advertised method error.
-5. **Error/status assumptions.** Some Flutter calls ignore response `status` or non-200 bodies; prescription deletion is removed from the UI optimistically even if the backend fails.
-6. **No frontend consumers.** Backend group-create, group-join, group-members, and history-record endpoints have no Flutter caller.
+### Workflow and configuration
 
-## Configuration and platform
+- Confirm/save remains non-atomic.
+- Deleting a prescription still leaves its image file and cascades reminder/history database rows.
+- Safety/allergy/interaction matching remains substring/generative and clinically unvalidated.
+- OCR response-shape stability remains unverified.
+- `GEMINI_API_KEY` still does not match the present environment-variable name.
+- API URL remains hardcoded to a LAN HTTP address.
+- Tracked Django secret expression, Django-version drift, iOS permission gaps, Android release ID/signing, displayed version mismatch, unused appearance dataset, placeholder settings, and absent real notifications remain.
+- There is still no isolated automated backend or Flutter test suite.
 
-1. **AI environment variable mismatch.** Code reads `GEMINI_API_KEY`; the present `.env` defines a differently named variable. No secret values were exposed.
-2. **Hardcoded backend address.** Flutter uses one private-LAN HTTP address despite comments referring to localhost/web behavior.
-3. **Tracked non-environment secret expression.** Django `SECRET_KEY` is not sourced from an environment expression in current settings. Its value is deliberately omitted.
-4. **Django version drift.** Requirements pin 5.2.13, while settings comments and two migrations were generated by 6.0.4.
-5. **iOS permissions incomplete.** `Info.plist` lacks camera and photo-library usage-description keys used by the implemented flow.
-6. **Media serving unspecified.** The image model exists and files are saved, but no explicit `MEDIA_ROOT`, `MEDIA_URL`, or URL-serving route exists.
-7. **Android release identity/signing unfinished.** Android still uses `com.example.drug_app`, and the release build is configured with the debug signing key.
-8. **Displayed version mismatch.** `pubspec.yaml` declares `1.0.0+1`, while the settings page displays `v1.2.0`.
+## New conflicts introduced by the merged code
 
-## Database/model mismatches
+### Critical runtime/schema conflicts
 
-1. `MedicationReminder` is present in applied migration and SQLite but absent from current models and all runtime code.
-2. `GroupMember.id` is BigAutoField in migration state, while current model/project default-field configuration does not explicitly preserve that choice.
-3. Drug license/name fields and warning pairs are not unique; importer/view logic assumes first/get-or-create matches without database constraints matching the intended identity.
+1. **Source is ahead of the actual database.** New code immediately queries `MedicationHistory`, `PatientAllergy`, `Remind.is_active`, and `TakingRecord.record_date`, but only old migrations are applied. Safety and new reminder/history/Health Bank flows cannot run against current SQLite.
+2. **Reminder uniqueness migration is blocked by data.** Current SQLite has 14 duplicate `(prescription_drug, frequency_tag)` groups (14 excess rows); migration `0005` adds uniqueness without cleanup.
+3. **Missing migrations for model constraints.** No migration implements `Drug.license unique=True` or `GroupMember(group,user)` uniqueness. Source, migration state, and actual schema disagree.
 
-## Workflow and data-integrity risks
+### API/frontend conflicts
 
-1. Confirm/save performs many writes without `transaction.atomic`; a failure can leave a prescription or partial drug set committed.
-2. If a drug is unmatched but an FDA warning list were produced, warning creation with `drug=None` would fail after prior writes.
-3. Re-saving reminders creates duplicates; it does not update/replace existing reminder rows.
-4. Deleting a `Prescription` row does not delete its image file, matching the many duplicate/orphan-looking files observed.
-5. Reminder/history APIs do not validate ownership or constrain status/tag values.
-6. Safety matching is substring-based against generated warning prose and drug names; false positives/negatives are technically likely and clinically unvalidated.
-7. OCR trusts Gemini's JSON shape. The prompt shows one object while the frontend expects a list of objects, so response-shape stability needs live verification.
+4. **Existing reminder save is now unauthorized.** Backend requires asserted identity; Flutter sends neither `user_id` nor an identity header, so `/reminders/set/` returns 401.
+5. **New APIs are backend-only.** Reminder list/today/toggle/delete, taking record/stats, and Health Bank sync have no Flutter integration.
+6. **Reminder replacement semantics are not represented in UI.** Backend disables omitted tags, while Flutter never loads the existing reminder list before sending its generated schedule.
+7. **Health Bank spec has an invalid cURL example.** It omits required `user_id` and would receive 400.
 
-## Dataset and feature completeness
+### Data and behavior conflicts
 
-1. The 5,851-row appearance dataset is unused; importer only loads the license dataset and does not populate color/shape.
-2. Settings toggles, cloud sync, PDF export, real device notifications, group UI, and taking-history UI are unfinished or absent.
-3. `MedicationReminder` and the active `Remind` model are duplicated reminder concepts; only `Remind` is used.
-4. Generic Flutter README and generated project metadata do not document the actual application.
+8. **Allergy duplication/misclassification risk.** Sync stores plain `PatientAllergy` and appends an annotated copy to `User.allergies`; safety reads both. Substring matching can emit duplicate warnings and classify the annotated copy as manually entered.
+9. **Soft-delete guarantee is incomplete.** Reminder soft delete protects direct removal, but parent prescription/drug cascades still delete reminder/taking history.
+10. **Adherence history changes after soft deletion.** Statistics count only currently active reminders, so disabling a reminder can remove its past expected doses from historical adherence totals even though recent record rows remain.
+11. **Health Bank upserts lack matching DB constraints.** Sequential calls are idempotent, but concurrent calls can duplicate `(user,drug_code)` or `(user,allergen_name)`.
+12. **Media path compatibility break.** Existing files are under root `prescriptions/`; new `MEDIA_ROOT` points to root `media/`, which is absent. Existing image URLs can point to missing files.
+13. **Admin search uses a nonexistent field.** New admin definitions reference `user__username`; the custom field is `user_name`.
+14. **Concurrent taking-record fallback is unsafe.** `IntegrityError` is caught inside the same outer `transaction.atomic()` block and then queries are issued; Django can mark that transaction broken before the fallback executes.
 
-## Tests
+## Status of tests and specifications
 
-1. Django `tests.py` files are empty and there are no Flutter tests.
-2. Both root API scripts use another machine/user's absolute image path.
-3. `test_api2.py` writes to the configured database and file storage; it is not safe as a production-data test.
-4. Tests do not cover authentication, ownership, validation, deletion, reminders, history, group flows, error responses, or external-service failure.
+- `API_REMINDERS_SPEC.md` is useful contract documentation but its claim of completed backend integration is not independently reproducible here and conflicts with the unmigrated current SQLite state.
+- `test_reminders_e2e.py` is state-mutating, uses configured database IDs, and is not an isolated test. It was not run.
+- `health_bank_api_spec.md` and `health_bank_schema.md` describe intended source behavior, not the currently applied database.

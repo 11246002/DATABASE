@@ -1,75 +1,70 @@
-# Django backend map
+# Current Django backend map
+
+Incremental audit basis: `1032f3e..ed3fadc`, inspected 2026-10-06. No backend source, migration, or database was changed by the audit.
 
 ## Project configuration
 
-- Project: `med_project`; root routes `/admin/`, `/accounts/`, `/medications/`.
-- Apps: `accounts`, `medications`, plus Django admin/auth/session stack and `corsheaders`.
+- Root routes: `/admin/`, `/accounts/`, `/medications/`.
+- Apps: `accounts`, `medications`, Django admin/auth/session stack, and `corsheaders`.
 - Custom user: `AUTH_USER_MODEL = 'accounts.User'`.
 - SQLite: `BASE_DIR / 'db.sqlite3'`.
-- Development settings: `DEBUG=True`, `ALLOWED_HOSTS=['*']`, and allow-all CORS.
-- `SECRET_KEY` is a non-environment expression in tracked settings; its value is intentionally omitted here.
+- `TIME_ZONE` changed from `UTC` to `Asia/Taipei`; `USE_TZ=True` remains.
+- `MEDIA_URL='/media/'` and `MEDIA_ROOT=BASE_DIR/'media'` were added, with development serving under `DEBUG`.
+- `DEBUG=True`, wildcard hosts, allow-all CORS, CSRF-exempt application views, and tracked non-environment secret configuration remain.
+
+The new media configuration resolves the absence of a media URL/root for future uploads, but the existing 127 files are under root `prescriptions/`, while `media/` is absent. Existing `prescriptions/...` database paths will resolve under `media/prescriptions/...` and are not backed by the current files.
 
 ## Accounts app
 
-- `models.py`: custom `UserManager`, `User`, `Group`, `GroupMember`.
-- `views.py`: register, login, profile read/update, group create/join/member-list functions.
-- `urls.py`: seven JSON endpoints.
-- Passwords are created with `set_password` and checked with `check_password`.
-- Login does not create a Django session or real token. The returned token is a deterministic placeholder.
-- Group-member listing checks that the requesting `user_id` belongs to the group; other APIs do not establish caller identity.
+- Models remain `User`, `Group`, and `GroupMember`.
+- `GroupMember.Meta` now declares uniqueness on `(group, user)`.
+- New migration `accounts.0003` changes the implicit ID back to `AutoField`, resolving the earlier model-state type drift.
+- No migration adds the new group/user unique constraint; actual SQLite has only non-unique FK indexes.
+- Group create/join/member-list APIs remain backend-only and still trust caller-supplied identity. Join performs a check-before-create, which is not concurrency-safe without the database constraint.
 
 ## Medications app
 
-- `models.py`: `Drug`, `Prescription`, `DrugWarning`, `PrescriptionDrug`, `Remind`, `TakingRecord`.
-- `views.py`: OCR, confirm/save, prescription CRUD, drug CRUD, and total safety check.
-- `reminders.py`: batch reminder creation.
-- `history.py`: taking-status record creation.
-- `utils.py`: Gemini OCR/translation, local fuzzy matching, OpenFDA query, number extraction, allergy/interaction matching.
-- `import_med.py`: standalone pandas import from `全部藥品許可證資料集.csv` using `Drug.get_or_create(license=...)`.
-- `藥品外觀資料集.csv` is not referenced by runtime/import code.
+Current models:
 
-## Backend flow by feature
+- Existing: `Drug`, `Prescription`, `DrugWarning`, `PrescriptionDrug`, `Remind`, `TakingRecord`.
+- New: `MedicationHistory` for Health Bank medication history and `PatientAllergy` for structured synced allergies.
+- `Remind` gains `is_active`, date-range properties, a soft-delete override, and intended uniqueness by `(prescription_drug, frequency_tag)`.
+- `TakingRecord` gains `record_date`, defaults `taken_at`, and intended uniqueness by `(remind, record_date)`.
+- `Drug.license` is now declared unique in the model, but no migration changes that field.
 
-### Scan
+Modules and flows:
 
-`/medications/api/scan/` -> `analyze_prescription_api` -> uploaded Pillow image -> Gemini vision -> parsed JSON -> response. No database write occurs in this first step.
+- `views.py`: existing scan/save/prescription CRUD/safety routes. Confirm/save now reuses the improved matched object and avoids creating `DrugWarning` with a null drug.
+- `utils.py`: multi-keyword Chinese/English/ingredient search; safety now combines manual allergies, `PatientAllergy`, current prescriptions, and `MedicationHistory`.
+- `reminders.py`: identity extraction, owner-filtered set/list/today/toggle/soft-delete flows, time validation, and update-or-create behavior.
+- `history.py`: owner-filtered taking status, inventory adjustment, duplicate-day handling, and adherence statistics.
+- `health_bank.py`: fixed mock payload, per-user upserts, and allergy text backfill; no real Health Bank SDK/OAuth call.
+- `admin.py`: table-oriented admin classes for all current models.
 
-### Confirm and save
+## Authentication and ownership
 
-`confirm_and_save_prescription_api` -> parse multipart `data` -> fuzzy `Drug` lookup -> cached warnings or OpenFDA lookup -> Gemini translation -> validate user -> create `Prescription` and `PrescriptionDrug` rows -> cache `DrugWarning` rows -> return report. The imported `transaction` module is unused, so this multi-write flow is not atomic.
+Reminder/history handlers now filter prescription/reminder objects by the asserted user ID. This is a real object-filtering improvement over the baseline, but the identity parser accepts a deterministic token, numeric bearer value, header, body, or query ID without validating credentials. It prevents accidental cross-user IDs only when the caller is honest; it does not prevent impersonation.
 
-### Safety
+Legacy account/prescription/safety/group endpoints remain unchanged: no verified session/token and broad missing object ownership checks.
 
-`check_all_medications_safety_api` -> `check_user_medication_safety` -> all user's prescription drugs -> substring-match declared allergies against raw/Chinese/English drug names -> substring-match stored warning targets against every other drug name -> mark both sides and return all drugs plus warnings.
+## Data-integrity behavior
 
-### Reminder/history
+- Reminder writes are atomic and use update-or-create; omitted tags for submitted drugs are disabled.
+- Taking status writes are atomic and intended to enforce one row per reminder/day.
+- Direct reminder deletion is implemented as inactive state, but deleting a parent `Prescription` or `PrescriptionDrug` still follows `on_delete=CASCADE`; the model's `delete()` override does not prevent collector/queryset cascades.
+- Health Bank upserts are idempotent in ordinary sequential requests by lookup keys, but models define no database uniqueness for `(user, drug_code)` or `(user, allergen_name)`.
+- Confirm/save remains non-atomic.
 
-The reminder endpoint creates one `Remind` per submitted drug/time pair; invalid drug IDs are silently skipped and previous rows are not replaced. The history endpoint creates `TakingRecord` for a supplied reminder ID/status. Neither verifies ownership.
+## Admin issues
 
-## Authentication/authorization
+`PrescriptionAdmin`, `MedicationHistoryAdmin`, and `PatientAllergyAdmin` include `user__username` in `search_fields`, but the custom user field is `user_name`. Admin searches using those entries can raise a field-resolution error; the latter two have no valid alternative entry for user-name search.
 
-All application handlers are `csrf_exempt`. There are no DRF authentication classes, Django `login()`, session checks, bearer-token checks, or object-level permission helpers. Resource ownership is generally not checked. Treat all current endpoints as unauthenticated regardless of the frontend login screen.
+## Migration state
 
-## File storage
+The source graph adds two parallel medication `0003` branches, reminder/history migrations through `0005`, and merge migration `0006`. It intends to create Health Bank tables, remove legacy `MedicationReminder`, add reminder/history fields, and add uniqueness.
 
-`Prescription.image` saves under `prescriptions/`. The repository has many generated/uploaded images, including explicitly named samples and repeated Django-renamed copies. No code deletes image files when a prescription row is deleted. No explicit media serving configuration was found.
+Actual SQLite has only `accounts` 0001/0002 and `medications` 0001/0002 recorded. It therefore lacks all new tables/columns/constraints. Fourteen `(prescription_drug, frequency_tag)` duplicate groups (14 excess rows) exist, so medication migration `0005` cannot safely add its unique constraint without a data reconciliation step. No such data migration is present.
 
-## External integrations
+## Tests and runtime verification
 
-- Gemini model `gemini-2.5-flash` for image extraction and warning translation.
-- OpenFDA `https://api.fda.gov/drug/label.json` with a ten-second `requests` timeout.
-- Code reads `GEMINI_API_KEY`; the current `.env` exposes a different variable name. Secret values were not inspected.
-
-## Dataset path
-
-- `全部藥品許可證資料集.csv`: 80,361 data rows; headers include license, Chinese/English names, indication, dosage form, and ingredient. `import_med.py` writes selected fields to `Drug`.
-- `藥品外觀資料集.csv`: 5,851 data rows; license/shape/color; currently unused.
-- Runtime search reads `Drug` via ORM. It does not read either CSV at request time.
-
-## API implementation notes
-
-- No OpenAPI/Swagger/Postman or serializer layer exists; `CODEX_API_MAP.md` is the reverse-engineered contract.
-- Several views have no explicit response for unsupported methods, causing Django's “view returned None” failure instead of a 405.
-- Exceptions are often returned verbatim to clients, potentially leaking implementation details.
-- `MedicationReminder` exists in migration/SQLite only, not current models/admin/views.
-
+`test_reminders_e2e.py` exercises seven live HTTP flows, but it is a mutable live-server script: it creates/updates reminders, writes taking records, changes active state, and uses the configured database. It is not isolated and was not run. Django checks, migration planning, and tests could not run because the machine has no installed Python interpreter.

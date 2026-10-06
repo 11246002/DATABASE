@@ -1,123 +1,73 @@
-# Verified Project Baseline
+# Verified incremental baseline
 
-Verification date: 2026-10-06 (Asia/Taipei). This baseline was produced from repository evidence and read-only environment/database checks. No production code, dependency, migration, database row, image, or existing working-tree change was modified.
+Verification date: 2026-10-06 (Asia/Taipei).
 
-## Repository
+## Git boundary
 
-- Root: `C:\Users\88692\drug_app`.
-- Independent `drug_app` repository; no assumptions from other projects apply.
-- Frontend: Flutter under `app/`; backend: Django under `accounts/`, `medications/`, and `med_project/`; current database: root `db.sqlite3`.
-- Before the first takeover audit, Git already reported three tracked modifications: `app/.metadata`, one `app/build/...cache.dill.track.dill` binary, and `app/lib/main.dart` (299 changed lines in current diff stat: 247 insertions, 67 deletions).
-- Before the first audit, `app/.gitignore` and 107 files under `prescriptions/` were already untracked. The image directory currently has 127 files total: 20 tracked and 107 untracked.
-- Audit-created files are root `AGENTS.md` and `docs/*.md`. This verification only updates/adds documentation.
+- Original takeover baseline commit: `1032f3e356c232309bb19b2ae0ab4ea90b2dbf92` (`wip: preserve local state before team sync`).
+- Current integration commit: `ed3fadc430bef2a05a18ce6a89644eb6a28446fe` (`merge: sync team main into local integration`).
+- Branch: `integrate/team-main-20261006`.
+- Incremental range: `1032f3e..ed3fadc`.
+- Future source audits should use `ed3fadc` as the new code baseline unless a later baseline supersedes it.
 
-## Frontend
+## Repository state at audit start
 
-- All authored behavior remains in `app/lib/main.dart`.
-- `API_BASE_URL` is a compile-time constant with one hardcoded private-LAN HTTP URL; it is not read from environment, build flavor, preferences, or platform configuration.
-- HTTP inventory: `package:http` direct calls only. No Dio, shared HTTP client, wrapper service, background network worker, or additional Dart source file exists.
-- There are 18 HTTP call sites representing 15 unique backend endpoints: 16 ordinary `http.get/post` calls plus two multipart request sites, with safety/list/detail endpoints called from more than one flow as documented in `CODEX_API_MAP.md`.
-- State uses `StatefulWidget`/`setState`; persisted login values are `user_id` and `token` in SharedPreferences.
-- `app/.dart_tool/package_config.json` and `pubspec.lock` exist; package config reports 72 packages. No `app/test/` tests exist.
+Tracked source was clean after the merge. Existing untracked state consisted of `app/.gitignore` and prescription image files; these were preserved. This audit changes only the seven requested `docs/CODEX_*.md` files. It does not stage or commit them.
 
-## Backend
+## Current frontend baseline
 
-- Root routing includes `/accounts/` and `/medications/`; static inspection finds 7 account routes and 12 medication routes.
-- All application handlers are function views; all are CSRF-exempt. No DRF, serializer, authentication middleware integration, or API schema was found.
-- Runtime medication work uses ORM-backed `Drug`, `Prescription`, `PrescriptionDrug`, `DrugWarning`, `Remind`, and `TakingRecord` models.
-- Django URL resolver could not be executed because no Python interpreter is installed; coverage was revalidated directly from root/app `urls.py` and every Flutter call site.
+- Flutter remains a single authored `app/lib/main.dart` file with 18 HTTP call sites and 15 unique endpoint patterns.
+- API base URL: `http://172.20.10.4:8000`.
+- Existing UI supports account, prescription/OCR, safety, reminder setting, and profile flows.
+- New group, reminder retrieval/taking history, and Health Bank backend features have no Flutter integration.
+- Reminder save is currently contract-incompatible because it omits required identity.
 
-## API counts
+## Current backend baseline
 
-- Backend application endpoints: **19** (Django admin excluded).
-- Frontend HTTP call sites: **18**.
-- Frontend unique endpoints: **15**.
-- Matched unique frontend endpoints: **15**.
-- Frontend-only endpoints: **0**.
-- Backend-only endpoints: **4** — group create, group join, group members, and history record.
-- These counts match the first takeover audit; no route correction was required.
+- 27 application URL patterns: 7 accounts and 20 medications.
+- New reminder/history handlers implement active state, list/today/toggle/delete, daily status, inventory changes, and statistics.
+- Health Bank mock sync adds structured medication/allergy storage and safety inputs.
+- Search now handles multiple terms/ingredients and unmatched warnings safely.
+- Identity remains unverified; new owner filtering is based on forgeable asserted IDs.
 
-## Database
+## Current model/migration baseline
 
-- SQLite opened with the native read-only flag. Its SHA-256 hash was identical before and after verification.
-- Both `medications.0001_initial` and `0002_medicationreminder` are recorded as applied.
-- `Remind`: current model yes; migration yes; table `medications_remind` yes (145 rows); backend and Flutter actively depend on it.
-- `MedicationReminder`: current model no; migration yes; table `medications_medicationreminder` yes (0 rows); no current backend or Flutter usage found.
-- Removing `Remind` would break current reminder/history flows. Removing `MedicationReminder` has no evidenced current runtime consumer, but remains a product/schema decision rather than an audit action.
-- The rest of the previously documented model/migration/SQLite comparison remains verified.
+Source intends:
 
-## Authentication
+- canonical `Remind` with `is_active` and unique drug/tag;
+- `TakingRecord.record_date` and unique reminder/day;
+- new `MedicationHistory` and `PatientAllergy`;
+- removal of legacy `MedicationReminder`;
+- `GroupMember(group,user)` and `Drug.license` uniqueness in models.
 
-```text
-register -> hashed User password
-login -> password check -> placeholder token + user_id
-Flutter -> stores token + user_id
-later calls -> send user_id/resource IDs, not token
-backend token verification -> absent
-general resource ownership verification -> absent
-logout persistence clearing -> absent
-```
+Actual SQLite remains at accounts 0002 and medications 0002. It has the legacy reminder table and lacks all new tables/columns/constraints. It contains 14 duplicate reminder-tag groups, blocking the intended unique constraint. The last modified timestamp predates this audit; SQLite was opened read-only.
 
-The only explicit authorization-like check is group membership lookup, and its requester identity is still a caller-supplied `user_id`.
+## Current API coverage baseline
 
-## External services
+- Frontend path resolution: 15/15.
+- Frontend contract-ready: 14/15.
+- Backend-only URL patterns: 12.
+- `check_all_safety`, reminder/history, and Health Bank source paths depend on unapplied schema.
 
-| Service | Caller | Environment variable name | Endpoint/model | Purpose | Failure behavior |
-|---|---|---|---|---|---|
-| Google Gemini | `extract_drugs_from_image`, `batch_translate_fda_warnings` in `medications/utils.py` | `GEMINI_API_KEY` | SDK-managed Google Generative AI endpoint; model `gemini-2.5-flash` | Prescription image extraction; OpenFDA warning translation/structuring | OCR/image/model error is printed and returns empty list, producing scan 400. Translation error is printed and returns `{}`, so save can continue without new warnings. |
-| OpenFDA drug label API | `query_openfda_interactions` in `medications/utils.py` | None | `https://api.fda.gov/drug/label.json`, generic-name search, limit 1 | Obtain `drug_interactions` text for a matched ingredient | Non-200, no result, or exception returns `NO_DATA`; exception is printed and no warning is added. Timeout is 10 seconds. |
+## Resolved since original baseline
 
-No other runtime outbound HTTP service was found. Root `test_api*.py` scripts call the local Django server and are test clients, not production integrations. Existing `.env` values were not displayed or copied.
+- Unmatched-drug warning null-FK path guarded.
+- Multi-keyword/ingredient drug search added.
+- GroupMember ID migration corrected to AutoField.
+- Source-level reminder canonicalization, update behavior, and partial ownership checks added.
+- Media settings and Asia/Taipei timezone added.
 
-## Known broken/incomplete behavior
+## Blocking or unresolved baseline facts
 
-- Placeholder token is not authentication; IDs are spoofable and ownership is generally unchecked.
-- Gemini environment-variable name does not match the name present in the current `.env`.
-- Prescription detail omits `is_severe_danger`; its detail-page red header/card state therefore remains false. Safety endpoint flows do return and use the field.
-- Fractional total amounts first lose precision in `extract_int`: `0.5 -> 0`, `1.5 -> 1`; later detail display shows the stored integer.
-- `MedicationReminder` is migrated/table-backed but model-less and unused; `Remind` is the active implementation.
-- Confirm/save is not atomic; reminder saves append duplicates; deleting a prescription does not delete its image file.
-- Group/history UI, actual device notification scheduling, cloud sync, PDF export, appearance-dataset import, and meaningful settings behavior are incomplete/absent.
-- Platform/deployment configuration issues listed in `CODEX_CONFLICTS.md` remain present.
+- Migration/data reconciliation is required before current backend can run safely with current SQLite.
+- Flutter reminder save and backend identity requirement disagree.
+- Real authentication and broad ownership enforcement remain absent.
+- Detail danger flag, fractional amount, registration real-name, non-atomic save, cascade/file deletion, deployment configuration, and test gaps remain.
+- Existing prescription images are not under the new `MEDIA_ROOT`.
 
-## Existing uncommitted changes
+## Environment and test limits
 
-### Present before Repository Takeover Audit
-
-- Modified: `app/.metadata`.
-- Modified binary: `app/build/f537d389bd7fe17e116f8b847863fcdd.cache.dill.track.dill`.
-- Modified production source: `app/lib/main.dart`.
-- Untracked: `app/.gitignore`.
-- Untracked: 107 files under `prescriptions/`.
-
-### Added by takeover documentation work
-
-- `AGENTS.md`.
-- `docs/CODEX_PROJECT_MAP.md`.
-- `docs/CODEX_FRONTEND_MAP.md`.
-- `docs/CODEX_BACKEND_MAP.md`.
-- `docs/CODEX_API_MAP.md`.
-- `docs/CODEX_DATA_MODEL.md`.
-- `docs/CODEX_CONFLICTS.md`.
-- `docs/CODEX_AUDIT.md`.
-- `docs/CODEX_BASELINE.md`.
-
-No reset, checkout, restore, staging, or commit was performed.
-
-## Environment availability
-
-- Python: unavailable. `python` and `python3` are not found. `C:\Windows\py.exe` exists, but reports that no default Python is installed. No repository `venv` or `.venv` exists.
-- Django runtime: unavailable because Python is unavailable. Repository requirement is Django 5.2.13; some generated files identify Django 6.0.4.
-- Dart: direct CLI works; Dart SDK 3.10.8 stable on Windows x64.
-- Flutter: installation metadata identifies Flutter 3.38.9 stable, framework revision `67323de...`, with Dart 3.10.8.
-- Flutter CLI verification: `flutter --version` and `flutter doctor` were attempted but did not get past the existing Flutter startup lock. They were interrupted without terminating existing Dart/IDE processes or changing toolchain configuration.
-- SQLite: available for verified read-only inspection through Windows native SQLite; database writes were not attempted.
-
-## Things not yet runtime-tested
-
-- Django startup, system checks, URL resolver, pending migration check, and isolated tests.
-- Flutter analyzer, compilation, widget tests, and device launch.
-- Camera/gallery/crop behavior on Android, iOS, and web.
-- Live Gemini OCR/translation and OpenFDA behavior.
-- End-to-end API behavior against a disposable database and storage directory.
-- Authentication/ownership abuse cases, error-method fallthrough, fractional amounts, detail severity display, duplicate reminders, and image deletion.
+- No installed Python interpreter; Django runtime/checks/tests/migration dry-run unavailable.
+- Reminder E2E script is state-mutating and was not run.
+- Database inspection used read-only SQLite access; no migration or row change occurred.
+- No production code, API, migration, database, or image was modified by this audit.
