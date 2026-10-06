@@ -13,7 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // 🌟 2. 新增的變數：因為你用網頁版測試，所以直接用 127.0.0.1 即可！
 // 網頁開發建議改為 127.0.0.1 或 localhost，避免跨網域問題
-const String API_BASE_URL = 'http://192.168.0.20:8000';
+const String API_BASE_URL = 'http://172.20.10.4:8000';
 
 late List<CameraDescription> cameras;
 
@@ -231,26 +231,72 @@ class _RegisterPageState extends State<RegisterPage> {
     }
   }
 
-  void _showSuccessDialog() {
-    showDialog(
-      context: context, barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: const Row(children: [Icon(Icons.check_circle, color: Colors.green), SizedBox(width: 10), Text('註冊成功')]),
-        content: const Text('您的帳號已成功建立，請使用新帳號登入。'),
-        actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+void _showSuccessDialog() {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(15),
+      ),
+
+      // 標題置中
+      title: const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.check_circle,
+            color: Colors.green,
+            size: 28,
+          ),
+          SizedBox(width: 8),
+          Text('註冊成功'),
+        ],
+      ),
+
+      // 內容文字置中
+      content: const Text(
+        '您的帳號已成功建立，請使用新帳號登入。',
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 16),
+      ),
+
+      // 按鈕置中
+      actionsAlignment: MainAxisAlignment.center,
+      actions: [
+        SizedBox(
+          width: 140,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
             onPressed: () {
               Navigator.pop(context);
-              Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const LoginPage()));
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const LoginPage(),
+                ),
+              );
             },
-            child: const Text('前往登入', style: TextStyle(color: Colors.white)),
-          )
-        ],
-      )
-    );
-  }
+            child: const Text(
+              '前往登入',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
   // 🌟 只替換畫面排版 (白色卡片分組，完美綁定你的 8 個 Controller)
   @override
@@ -504,7 +550,7 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
 
   // 🌟 真實串接 1：上傳圖片給 AI 辨識
   Future<void> _uploadAndAnalyze(XFile imageFile) async { 
-    _showLoadingDialog("正在由 AI 分析藥單...");
+    _showLoadingDialog("正在由 AI 分析藥單");
     var apiUrl = Uri.parse('$API_BASE_URL/medications/api/scan/');
 
     try {
@@ -556,7 +602,7 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
               const SizedBox(height: 20),
               Text(message, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
-              const Text("請稍候，這可能需要幾秒鐘的時間...", style: TextStyle(color: Colors.grey, fontSize: 12)),
+              const Text("需要幾秒鐘的時間", style: TextStyle(color: Colors.grey, fontSize: 12)),
             ],
           ),
         );
@@ -616,16 +662,31 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
           ),
           actionsAlignment: MainAxisAlignment.spaceEvenly, 
           actions: [
-            ElevatedButton(onPressed: () => Navigator.pop(context), style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.redAccent, side: const BorderSide(color: Colors.redAccent)), child: const Text('資料有誤重拍')),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context); 
-                // 💡 修改點 3：把圖片傳給儲存 API
-                _checkInteractionsAndSave(drugsData, imageFile); 
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white),
-              child: const Text('確認並檢測'),
-            ),
+            Center( // 👈 1. 在最外層加上 Center
+  child: ElevatedButton(
+    onPressed: () => Navigator.pop(context), 
+    style: ElevatedButton.styleFrom(
+      backgroundColor: Colors.white, 
+      foregroundColor: Colors.redAccent, 
+      side: const BorderSide(color: Colors.redAccent),
+    ), 
+    child: const Text('資料有誤重拍'),
+  ),
+),
+Center( // 👈 1. 在最外層加上 Center
+  child: ElevatedButton(
+    onPressed: () {
+      Navigator.pop(context); 
+      // 💡 修改點 3：把圖片傳給儲存 API
+      _checkInteractionsAndSave(drugsData, imageFile); 
+    },
+    style: ElevatedButton.styleFrom(
+      backgroundColor: Colors.teal, 
+      foregroundColor: Colors.white,
+    ),
+    child: const Text('確認並檢測'),
+  ),
+)
           ],
         );
       },
@@ -634,7 +695,7 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
 
   // 🌟 💡 終極修改：改用 Form-data 傳送，並符合所有欄位名稱
   Future<void> _checkInteractionsAndSave(List<dynamic> drugsData, XFile imageFile) async {
-    _showLoadingDialog("正在安全儲存藥單並進行交互作用檢測...");
+    _showLoadingDialog("正在進行交互作用檢測");
     
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -685,14 +746,42 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
       if (!mounted) return;
       Navigator.pop(context); // 關閉載入框
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        var data = json.decode(responseData);
-        bool hasInteraction = data['has_danger'] == true; 
-        String interactionDetails = data['danger_message'] ?? "請留意藥物使用安全，若有不適請立即停藥。";
+if (response.statusCode == 200 || response.statusCode == 201) {
+        // 1. 藥單存檔成功了！
+        debugPrint('✅ 存檔成功，準備呼叫安全檢查 API...');
         
+        // 2. 緊接著打第二支 API：進行總體安全檢查 (這支才會回傳紅綠燈資料)
+        final safetyResponse = await http.post(
+          Uri.parse('$API_BASE_URL/medications/api/check_all_safety/'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({"user_id": userId}),
+        );
+
+        final safetyData = json.decode(utf8.decode(safetyResponse.bodyBytes));
+        bool hasInteraction = false;
+        String interactionDetails = "請留意藥物使用安全，若有不適請立即停藥。";
+
+        // 3. 判斷安全檢查的結果
+        if (safetyResponse.statusCode == 200 && safetyData['status'] == 'success') {
+          List<dynamic> rawList = safetyData['data'] ?? [];
+          
+          // 過濾出真的有觸發紅燈危險的藥物
+          List<dynamic> actualDangerList = rawList.where((item) {
+            return item['is_severe_danger'] == true;
+          }).toList();
+
+          if (actualDangerList.isNotEmpty) {
+            hasInteraction = true;
+            // 抓出有衝突的藥名顯示在彈窗上
+            List<String> dangerNames = actualDangerList.map((e) => e['raw_name'].toString()).toList();
+            interactionDetails = "衝突藥物包含：\n${dangerNames.join('、')}";
+          }
+        }
+
+        // 4. 根據真實的安全檢查結果，決定跳紅燈還是綠燈
         _showFinalResultDialog(hasInteraction, interactionDetails);
+        
       } else {
-        // 如果還是出錯，直接把後端的錯誤吐在畫面上，方便抓蟲
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('儲存失敗: $responseData'), backgroundColor: Colors.redAccent, duration: const Duration(seconds: 5)));
       }
 
@@ -710,15 +799,44 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: Row(
-          children: [
-            Icon(hasInteraction ? Icons.warning_amber_rounded : Icons.check_circle, color: hasInteraction ? Colors.red : Colors.green, size: 30),
-            const SizedBox(width: 10),
-            Text(hasInteraction ? '發現交互作用風險！' : '檢測通過', style: const TextStyle(fontWeight: FontWeight.bold)),
-          ],
+title: Center(
+  child: FittedBox(
+    fit: BoxFit.scaleDown,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          hasInteraction
+              ? Icons.warning_amber_rounded
+              : Icons.check_circle,
+          color: hasInteraction ? Colors.red : Colors.green,
+          size: 28,
         ),
-        content: Text(hasInteraction ? '系統偵測到潛在風險：\n\n$details' : '沒有發現任何藥物交互作用。\n已為您安全加入藥袋紀錄中！', style: const TextStyle(fontSize: 15, height: 1.5)),
-        actions: [
+        const SizedBox(width: 8),
+        Text(
+          hasInteraction ? '發現交互作用風險' : '檢測通過',
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 20,
+          ),
+        ),
+      ],
+    ),
+  ),
+),
+content: Column(
+  mainAxisSize: MainAxisSize.min,
+  crossAxisAlignment: CrossAxisAlignment.center,
+  children: [
+    Text(
+      hasInteraction
+          ? details
+          : '無任何藥物交互作用',
+      textAlign: TextAlign.center,
+      style: const TextStyle(fontSize: 15, height: 1.5),
+    ),
+  ],
+),        actions: [
           Center(
             child: ElevatedButton(
               onPressed: () {
@@ -952,14 +1070,14 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
     }
   }
 
-  void _showSafetyResultDialog(List<dynamic> dangerList) {
+void _showSafetyResultDialog(List<dynamic> dangerList) {
     if (dangerList.isEmpty) {
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
           title: const Row(children: [Icon(Icons.check_circle, color: Colors.green, size: 30), SizedBox(width: 10), Text('安全過關！')]),
-          content: const Text('太棒了！您目前身上所有的藥單之間沒有發現任何交互作用與過敏風險。請安心服藥！', style: TextStyle(fontSize: 15, height: 1.5)),
+          content: const Text('太棒了！無發現任何交互作用與過敏風險。請安心服藥！', style: TextStyle(fontSize: 15, height: 1.5)),
           actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('太好了', style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)))],
         )
       );
@@ -970,7 +1088,7 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: const Row(children: [Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 30), SizedBox(width: 10), Expanded(child: Text('發現跨藥單風險！', style: TextStyle(fontSize: 18)))]),
+        title: const Row(children: [Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 30), SizedBox(width: 10), Expanded(child: Text('跨藥單交互作用', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)))]),
         content: SizedBox(
           width: double.maxFinite,
           child: ListView.builder(
@@ -978,16 +1096,86 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
             itemCount: dangerList.length,
             itemBuilder: (context, index) {
               final item = dangerList[index];
+              
+              // 🌟 核心過濾邏輯：只抓出「真的有跟其他藥物衝突」或「過敏」的警告！
+// 🌟 核心過濾邏輯：只抓出「真的有跟其他藥物衝突」或「過敏」的警告！
+              List<dynamic> actualConflicts = (item['warnings'] as List).where((w) {
+                return w['is_drug_conflict'] == true || w['is_allergy_conflict'] == true;
+              }).toList();
+
+              // 🌟 終極去重魔法：解決雙向警告的問題
+              // 檢查這顆藥是否有「資料庫原廠」的直接警告 (沒有包含"反向衝突"字眼的)
+              bool hasDirectWarning = actualConflicts.any((w) => !w['conflict_target'].toString().contains('反向衝突'));
+              
+              // 如果有直接警告，就把系統自動加的「反向衝突」隱藏起來，保持畫面乾淨
+              if (hasDirectWarning) {
+                actualConflicts.removeWhere((w) => w['conflict_target'].toString().contains('反向衝突'));
+              }
+
+              // 如果過濾後沒有東西，就不渲染這個卡片
+              if (actualConflicts.isEmpty) return const SizedBox.shrink();
               return Card(
-                color: Colors.red.shade50,
+                color: Colors.white,
+                elevation: 3,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12), 
+                  side: BorderSide(color: Colors.redAccent.withOpacity(0.5), width: 1)
+                ),
+                margin: const EdgeInsets.only(bottom: 12),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('💊 ${item['raw_name']} (${item['hospital']})', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.redAccent)),
-                      const SizedBox(height: 8),
-                      ...(item['warnings'] as List).map<Widget>((w) => Text('⚠️ 【${w['conflict_target']}】${w['warning_desc']}', style: const TextStyle(fontSize: 13, height: 1.3))).toList()
+                      // 🌟 清楚標示這顆藥的名字與「所屬藥單」
+                      Text('💊 藥品：${item['raw_name']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87)),
+                      const SizedBox(height: 4),
+                      Text('🏥 來源藥單：${item['hospital']}', style: TextStyle(fontSize: 13, color: Colors.grey.shade600, fontWeight: FontWeight.bold)),
+                      
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8.0),
+                        child: Divider(height: 1, color: Colors.redAccent),
+                      ),
+                      
+                      // 🌟 只印出真正的交互作用
+                      ...actualConflicts.map<Widget>((w) {
+                        String targetName = w['conflict_target'].toString().replaceAll('反向衝突：', '').trim();
+                        
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(8)
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(Icons.flash_on, color: Colors.redAccent, size: 18),
+                                  const SizedBox(width: 5),
+                                  Expanded(
+                                    child: RichText(
+                                      text: TextSpan(
+                                        style: const TextStyle(fontSize: 14, color: Colors.black87),
+                                        children: [
+                                          const TextSpan(text: '嚴重警告：不可與 '),
+                                          TextSpan(text: '【$targetName】', style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                                          const TextSpan(text: ' 併用！'),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text('詳情：${w['warning_desc']}', style: TextStyle(fontSize: 13, color: Colors.grey.shade800, height: 1.4)),
+                            ],
+                          ),
+                        );
+                      }).toList()
                     ],
                   ),
                 ),
@@ -995,7 +1183,14 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
             }
           ),
         ),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('我了解了', style: TextStyle(color: Colors.grey)))],
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context), 
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('我了解了', style: TextStyle(color: Colors.white))
+          )
+        ],
       )
     );
   }
