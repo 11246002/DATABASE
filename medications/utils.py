@@ -5,6 +5,7 @@ import google.generativeai as genai
 from PIL import Image
 from dotenv import load_dotenv
 import re
+from datetime import timedelta
 from django.db.models import Q
 from .models import Drug, PrescriptionDrug, DrugWarning, MedicationHistory, PatientAllergy
 from accounts.models import User
@@ -199,6 +200,49 @@ def extract_int(text):
     return int(nums[0]) if nums else 0
 
 
+def check_medication_time_overlap(pd1, pd2, buffer_days=7):
+    """
+    醫學時序重疊判斷 (Pharmacokinetic Clearance Window Check):
+    判斷兩項藥品在服藥週期（包含藥物半衰期與體內代謝清除緩衝期 buffer_days，預設 7 天）是否有時程重疊。
+    1. 同一張藥單開立之藥品必然重疊。
+    2. 不同藥單以 [看診日, 看診日 + 天數 + 代謝緩衝期] 判定區間交集。
+    3. 若任一藥物缺少看診時程資訊，採醫學安全保守原則視為重疊。
+    """
+    try:
+        p1 = getattr(pd1, 'prescription', None)
+        p2 = getattr(pd2, 'prescription', None)
+        if not p1 or not p2:
+            return True, "缺乏處方關聯，採保守比對"
+        
+        # 同一張藥單必然重疊
+        if getattr(p1, 'prescription_id', None) == getattr(p2, 'prescription_id', None):
+            return True, "同張處方藥品（同時服用）"
+
+        v1 = p1.visit_date
+        v2 = p2.visit_date
+        if not v1 or not v2:
+            return True, "看診日未詳載，採保守比對"
+
+        d1 = v1.date() if hasattr(v1, 'date') else v1
+        d2 = v2.date() if hasattr(v2, 'date') else v2
+
+        days1 = pd1.days if pd1.days and pd1.days > 0 else 7
+        days2 = pd2.days if pd2.days and pd2.days > 0 else 7
+
+        end1 = d1 + timedelta(days=days1 + buffer_days)
+        end2 = d2 + timedelta(days=days2 + buffer_days)
+
+        # 兩區間是否有交集：max(start1, start2) <= min(end1, end2)
+        has_overlap = max(d1, d2) <= min(end1, end2)
+        if has_overlap:
+            return True, "服藥週期重疊（實質併用衝突風險）"
+        else:
+            diff_days = abs((d1 - d2).days)
+            return False, f"開立日期相隔 {diff_days} 天（已過藥物代謝期，非併用中衝突）"
+    except Exception:
+        return True, "時程計算異常，安全起見列入警示"
+
+
 # 用藥安全檢查小工具：負責交叉比對過敏與藥物衝突（整合健康存摺資料）。
 def check_user_medication_safety(user_id):
     try:
@@ -281,6 +325,7 @@ def check_user_medication_safety(user_id):
                 
                 hit_other_drug = False
                 conflicting_pd_list = []
+                historical_note_list = []
 
                 for other_pd in all_user_drugs:
                     if other_pd.id == pd.id: 
@@ -292,22 +337,25 @@ def check_user_medication_safety(user_id):
                     if other_pd.drug and getattr(other_pd.drug, 'element', None): other_names.append(other_pd.drug.element.lower())
 
                     if any(name in target or target in name for name in other_names if name):
-                        hit_other_drug = True
-                        conflicting_pd_list.append(other_pd)
+                        # 🌟 時序重疊與代謝清除期檢核
+                        is_overlapping, time_desc = check_medication_time_overlap(pd, other_pd)
+                        if is_overlapping:
+                            hit_other_drug = True
+                            conflicting_pd_list.append((other_pd, time_desc))
+                        else:
+                            historical_note_list.append((other_pd, time_desc))
 
-                drug_results_map[pd.id]['warnings'].append({
-                    'conflict_target': w.conflict_target,
-                    'warning_desc': w.warning_desc,
-                    'is_allergy_conflict': False,
-                    'is_drug_conflict': hit_other_drug,
-                    'conflicting_drug_names': [cpd.raw_name for cpd in conflicting_pd_list],
-                    'conflicting_drug_ids': [cpd.id for cpd in conflicting_pd_list]
-                })
-
-                # [C] 連坐法：雙向標示危險
                 if hit_other_drug:
                     drug_results_map[pd.id]['is_severe_danger'] = True
-                    for cpd in conflicting_pd_list:
+                    drug_results_map[pd.id]['warnings'].append({
+                        'conflict_target': w.conflict_target,
+                        'warning_desc': f"{w.warning_desc}（併用時程重疊）",
+                        'is_allergy_conflict': False,
+                        'is_drug_conflict': True,
+                        'conflicting_drug_names': [cpd.raw_name for cpd, _ in conflicting_pd_list],
+                        'conflicting_drug_ids': [cpd.id for cpd, _ in conflicting_pd_list]
+                    })
+                    for cpd, time_desc in conflicting_pd_list:
                         drug_results_map[cpd.id]['is_severe_danger'] = True
                         already_has_warning = any(
                             existing_w['conflict_target'] == f"反向衝突：{pd.raw_name}" 
@@ -316,12 +364,32 @@ def check_user_medication_safety(user_id):
                         if not already_has_warning:
                             drug_results_map[cpd.id]['warnings'].append({
                                 'conflict_target': f"反向衝突：{pd.raw_name}",
-                                'warning_desc': f"此藥物與您正在服用的 {pd.raw_name} 產生交互作用，請參考該藥物的警告說明。",
+                                'warning_desc': f"此藥物與您正在服用的 {pd.raw_name} 產生交互作用，請參考該藥物的警告說明。({time_desc})",
                                 'is_allergy_conflict': False,
                                 'is_drug_conflict': True,
                                 'conflicting_drug_names': [pd.raw_name],
                                 'conflicting_drug_ids': [pd.id]
                             })
+                elif historical_note_list:
+                    # 曾有開立紀錄但服藥時段未重疊（已過代謝期），僅列為衛教提示，不標記為 is_severe_danger
+                    h_names = [hpd.raw_name for hpd, _ in historical_note_list]
+                    drug_results_map[pd.id]['warnings'].append({
+                        'conflict_target': f"歷史用藥提示：{w.conflict_target}",
+                        'warning_desc': f"{w.warning_desc}（備註：系統檢測過去曾開立過相關藥物 {', '.join(h_names)}，但因服藥時程相隔久遠已過代謝期，若已停藥則無併用風險）。",
+                        'is_allergy_conflict': False,
+                        'is_drug_conflict': False,
+                        'conflicting_drug_names': h_names,
+                        'conflicting_drug_ids': [hpd.id for hpd, _ in historical_note_list]
+                    })
+                else:
+                    drug_results_map[pd.id]['warnings'].append({
+                        'conflict_target': w.conflict_target,
+                        'warning_desc': w.warning_desc,
+                        'is_allergy_conflict': False,
+                        'is_drug_conflict': False,
+                        'conflicting_drug_names': [],
+                        'conflicting_drug_ids': []
+                    })
 
                 # ==========================================
                 # [D] 檢查與【健康存摺歷史藥歷】的衝突
@@ -330,7 +398,19 @@ def check_user_medication_safety(user_id):
                 for bmed in bank_history_meds:
                     b_names = [bmed.drug_name.lower()]
                     if any(bname in target or target in bname for bname in b_names if bname):
-                        conflicting_bank_meds.append(bmed)
+                        # 檢查健康存摺處方日 (rx_date) 與目前藥單是否具備時程重疊
+                        b_overlap = True
+                        if bmed.rx_date and pd.prescription and pd.prescription.visit_date:
+                            try:
+                                d_current = pd.prescription.visit_date.date() if hasattr(pd.prescription.visit_date, 'date') else pd.prescription.visit_date
+                                d_bank = bmed.rx_date
+                                end_bank = d_bank + timedelta(days=(bmed.days or 28) + 7)
+                                end_current = d_current + timedelta(days=(pd.days or 7) + 7)
+                                b_overlap = max(d_current, d_bank) <= min(end_current, end_bank)
+                            except Exception:
+                                b_overlap = True
+                        if b_overlap:
+                            conflicting_bank_meds.append(bmed)
 
                 if conflicting_bank_meds:
                     drug_results_map[pd.id]['is_severe_danger'] = True
