@@ -3,6 +3,7 @@ import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:http/http.dart' as http;
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'dart:ui';
@@ -13,126 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // 🌟 2. 新增的變數：因為你用網頁版測試，所以直接用 127.0.0.1 即可！
 // 網頁開發建議改為 127.0.0.1 或 localhost，避免跨網域問題
-const String API_BASE_URL = 'http://172.20.10.4:8000';
-
-enum _SafetyCheckStatus { safe, danger, unavailable }
-
-class _SafetyCheckResult {
-  final _SafetyCheckStatus status;
-  final List<Map<String, dynamic>> items;
-
-  const _SafetyCheckResult(this.status, [this.items = const []]);
-}
-
-bool _isDangerousSafetyItem(Map<String, dynamic> item) {
-  if (item['is_severe_danger'] == true) return true;
-  final warnings = item['warnings'] as List<Map<String, dynamic>>;
-  return warnings.any(
-    (warning) =>
-        warning['is_drug_conflict'] == true ||
-        warning['is_allergy_conflict'] == true,
-  );
-}
-
-Future<_SafetyCheckResult> _requestSafetyCheck(int userId) async {
-  try {
-    final response = await http
-        .post(
-          Uri.parse('$API_BASE_URL/medications/api/check_all_safety/'),
-          headers: {'Content-Type': 'application/json'},
-          body: json.encode({'user_id': userId}),
-        )
-        .timeout(const Duration(seconds: 15));
-
-    if (response.statusCode != 200) {
-      return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
-    }
-
-    final decoded = json.decode(utf8.decode(response.bodyBytes));
-    if (decoded is! Map ||
-        decoded['status'] != 'success' ||
-        decoded['data'] is! List) {
-      return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
-    }
-
-    final rawItems = decoded['data'] as List<dynamic>;
-    if (rawItems.isEmpty) {
-      return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
-    }
-
-    final items = <Map<String, dynamic>>[];
-    for (final rawItem in rawItems) {
-      if (rawItem is! Map) {
-        return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
-      }
-
-      final item = Map<String, dynamic>.from(rawItem);
-      final isSevereDanger = item['is_severe_danger'];
-      final rawWarnings = item['warnings'];
-      if (item['raw_name'] is! String ||
-          item['hospital'] is! String ||
-          isSevereDanger is! bool ||
-          rawWarnings is! List) {
-        return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
-      }
-
-      final warnings = <Map<String, dynamic>>[];
-      for (final rawWarning in rawWarnings) {
-        if (rawWarning is! Map) {
-          return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
-        }
-
-        final warning = Map<String, dynamic>.from(rawWarning);
-        if (warning['conflict_target'] is! String ||
-            warning['warning_desc'] is! String ||
-            warning['is_drug_conflict'] is! bool ||
-            warning['is_allergy_conflict'] is! bool) {
-          return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
-        }
-
-        warnings.add(warning);
-      }
-
-      item['warnings'] = warnings;
-      items.add(item);
-    }
-
-    final hasDanger = items.any(_isDangerousSafetyItem);
-    return _SafetyCheckResult(
-      hasDanger ? _SafetyCheckStatus.danger : _SafetyCheckStatus.safe,
-      items,
-    );
-  } catch (e) {
-    debugPrint('Safety API unavailable: $e');
-    return const _SafetyCheckResult(_SafetyCheckStatus.unavailable);
-  }
-}
-
-Future<void> _showSafetyUnavailableDialog(BuildContext context) {
-  return showDialog<void>(
-    context: context,
-    builder: (context) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-      title: const Row(
-        children: [
-          Icon(Icons.info_outline, color: Colors.orangeAccent, size: 30),
-          SizedBox(width: 10),
-          Expanded(child: Text('安全檢查未完成')),
-        ],
-      ),
-      content: const Text(
-        '目前無法完成安全檢查，請稍後再試。',
-        style: TextStyle(fontSize: 15, height: 1.5),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('知道了'),
-        ),
-      ],
-    ),
-  );
-}
+const String API_BASE_URL = 'http://192.168.0.12:8000';
 
 late List<CameraDescription> cameras;
 
@@ -350,66 +232,72 @@ class _RegisterPageState extends State<RegisterPage> {
     }
   }
 
-  void _showSuccessDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-        title: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.check_circle,
-              color: Colors.green,
-              size: 28,
-            ),
-            SizedBox(width: 8),
-            Text('註冊成功'),
-          ],
-        ),
-        content: const Text(
-          '您的帳號已成功建立，請使用新帳號登入。',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 16),
-        ),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          SizedBox(
-            width: 140,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.teal,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
+void _showSuccessDialog() {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(15),
+      ),
+
+      // 標題置中
+      title: const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.check_circle,
+            color: Colors.green,
+            size: 28,
+          ),
+          SizedBox(width: 8),
+          Text('註冊成功'),
+        ],
+      ),
+
+      // 內容文字置中
+      content: const Text(
+        '您的帳號已成功建立，請使用新帳號登入。',
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 16),
+      ),
+
+      // 按鈕置中
+      actionsAlignment: MainAxisAlignment.center,
+      actions: [
+        SizedBox(
+          width: 140,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
               ),
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const LoginPage(),
-                  ),
-                );
-              },
-              child: const Text(
-                '前往登入',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const LoginPage(),
                 ),
+              );
+            },
+            child: const Text(
+              '前往登入',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
+        ),
+      ],
+    ),
+  );
+}
 
   // 🌟 只替換畫面排版 (白色卡片分組，完美綁定你的 8 個 Controller)
   @override
@@ -682,7 +570,7 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
       var responseData = utf8.decode(await response.stream.toBytes()); 
       
       if (!mounted) return;
-      Navigator.pop(context); 
+      Navigator.pop(context);
 
       if (response.statusCode == 200) {
         var jsonResult = json.decode(responseData);
@@ -809,24 +697,10 @@ Center( // 👈 1. 在最外層加上 Center
   // 🌟 💡 終極修改：改用 Form-data 傳送，並符合所有欄位名稱
   Future<void> _checkInteractionsAndSave(List<dynamic> drugsData, XFile imageFile) async {
     _showLoadingDialog("正在進行交互作用檢測");
-    bool isLoadingDialogOpen = true;
     
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('user_id');
-
-      if (userId == null) {
-        if (!mounted) return;
-        Navigator.pop(context);
-        isLoadingDialogOpen = false;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('登入資訊已失效，請重新登入後再試。'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-        return;
-      }
 
       // 1. 整理藥品陣列，嚴格對齊規格書要求的欄位
       List<Map<String, dynamic>> confirmedDrugs = drugsData.map((drug) {
@@ -872,30 +746,40 @@ Center( // 👈 1. 在最外層加上 Center
       
       if (!mounted) return;
       Navigator.pop(context); // 關閉載入框
-      isLoadingDialogOpen = false;
 
 if (response.statusCode == 200 || response.statusCode == 201) {
         // 1. 藥單存檔成功了！
         debugPrint('✅ 存檔成功，準備呼叫安全檢查 API...');
         
         // 2. 緊接著打第二支 API：進行總體安全檢查 (這支才會回傳紅綠燈資料)
-        final safetyResult = await _requestSafetyCheck(userId);
-        if (!mounted) return;
+        final safetyResponse = await http.post(
+          Uri.parse('$API_BASE_URL/medications/api/check_all_safety/'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({"user_id": userId}),
+        );
 
-        if (safetyResult.status == _SafetyCheckStatus.unavailable) {
-          await _showSafetyUnavailableDialog(context);
-          return;
+        final safetyData = json.decode(utf8.decode(safetyResponse.bodyBytes));
+        bool hasInteraction = false;
+        String interactionDetails = "請留意藥物使用安全，若有不適請立即停藥。";
+
+        // 3. 判斷安全檢查的結果
+        if (safetyResponse.statusCode == 200 && safetyData['status'] == 'success') {
+          List<dynamic> rawList = safetyData['data'] ?? [];
+
+          // 過濾出真的有觸發紅燈危險的藥物
+          List<dynamic> actualDangerList = rawList.where((item) {
+            return item['is_severe_danger'] == true;
+          }).toList();
+
+          if (actualDangerList.isNotEmpty) {
+            hasInteraction = true;
+            // 抓出有衝突的藥名顯示在彈窗上
+            List<String> dangerNames = actualDangerList.map((e) => e['raw_name'].toString()).toList();
+            interactionDetails = "衝突藥物包含：\n${dangerNames.join('、')}";
+          }
         }
 
-        final actualDangerList = safetyResult.items
-            .where(_isDangerousSafetyItem)
-            .toList();
-        final hasInteraction = safetyResult.status == _SafetyCheckStatus.danger;
-        final interactionDetails = hasInteraction
-            ? "衝突藥物包含：\n${actualDangerList.map((item) => item['raw_name']).join('、')}"
-            : "請留意藥物使用安全，若有不適請立即停藥。";
-
-        // 3. 只有結構完整且明確的安全結果，才顯示紅燈或綠燈
+        // 4. 根據真實的安全檢查結果，決定跳紅燈還是綠燈
         _showFinalResultDialog(hasInteraction, interactionDetails);
         
       } else {
@@ -904,9 +788,7 @@ if (response.statusCode == 200 || response.statusCode == 201) {
 
     } catch (e) {
       if (!mounted) return;
-      if (isLoadingDialogOpen) {
-        Navigator.pop(context);
-      }
+      Navigator.pop(context);
       debugPrint('❌ 檢測發生錯誤: $e');
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線失敗: $e'), backgroundColor: Colors.redAccent));
     }
@@ -1151,16 +1033,7 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
   Future<void> _checkAllSafety() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     int? userId = prefs.getInt('user_id');
-    if (userId == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('登入資訊已失效，請重新登入後再試。'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
+    if (userId == null) return;
 
     showDialog(
       context: context,
@@ -1168,22 +1041,37 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
       builder: (context) => const Center(child: CircularProgressIndicator(color: Colors.teal)),
     );
 
-    final safetyResult = await _requestSafetyCheck(userId);
-    if (!mounted) return;
-    Navigator.pop(context);
+    try {
+      final response = await http.post(
+        Uri.parse('$API_BASE_URL/medications/api/check_all_safety/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({"user_id": userId}),
+      );
 
-    if (safetyResult.status == _SafetyCheckStatus.unavailable) {
-      await _showSafetyUnavailableDialog(context);
-      return;
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      final data = json.decode(utf8.decode(response.bodyBytes));
+
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        List<dynamic> rawList = data['data'] ?? [];
+        List<dynamic> actualDangerList = rawList.where((item) {
+          final warnings = item['warnings'] as List?;
+          return warnings != null && warnings.isNotEmpty;
+        }).toList();
+
+        _showSafetyResultDialog(actualDangerList);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('檢查失敗：${data['message']}'), backgroundColor: Colors.redAccent));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線失敗：$e'), backgroundColor: Colors.redAccent));
     }
-
-    final actualDangerList = safetyResult.items
-        .where(_isDangerousSafetyItem)
-        .toList();
-    _showSafetyResultDialog(actualDangerList);
   }
 
-void _showSafetyResultDialog(List<Map<String, dynamic>> dangerList) {
+void _showSafetyResultDialog(List<dynamic> dangerList) {
     if (dangerList.isEmpty) {
       showDialog(
         context: context,
@@ -1288,7 +1176,7 @@ void _showSafetyResultDialog(List<Map<String, dynamic>> dangerList) {
                             ],
                           ),
                         );
-                      }).toList()
+                      })
                     ],
                   ),
                 ),
@@ -1380,8 +1268,9 @@ void _showSafetyResultDialog(List<Map<String, dynamic>> dangerList) {
     }).toList();
 
     // 💡 資料排序篩選邏輯
-    if (_currentFilter == '最新加入') displayedData.sort((a, b) => b['visit_date'].compareTo(a['visit_date']));
-    else if (_currentFilter == '最早加入') displayedData.sort((a, b) => a['visit_date'].compareTo(b['visit_date']));
+    if (_currentFilter == '最新加入') {
+      displayedData.sort((a, b) => b['visit_date'].compareTo(a['visit_date']));
+    } else if (_currentFilter == '最早加入') displayedData.sort((a, b) => a['visit_date'].compareTo(b['visit_date']));
 
     return SafeArea(
       child: Padding(
@@ -1569,6 +1458,7 @@ class PrescriptionDetailPage extends StatefulWidget {
 class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
   bool _isLoading = true; // 載入狀態
   List<dynamic> _meds = []; // 用來裝後端傳來的藥品明細
+  bool _hasSevereDanger = false;
 
   @override
   void initState() {
@@ -1600,6 +1490,8 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
           } else {
             _meds = data['data']['medications'] ?? data['data']['drugs'] ?? data['data']['meds'] ?? [];
           }
+
+          _hasSevereDanger = _meds.any((m) => m['is_severe_danger'] == true);
         });
       }
     } catch (e) {
@@ -1739,9 +1631,9 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
               Container(
                 width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 25),
                 decoration: BoxDecoration(
-                  color: Colors.blueGrey,
+                  color: _hasSevereDanger ? Colors.redAccent : Colors.teal,
                   borderRadius: BorderRadius.circular(15),
-                  boxShadow: [BoxShadow(color: Colors.blueGrey.withOpacity(0.3), spreadRadius: 1, blurRadius: 5, offset: const Offset(0, 3))],
+                  boxShadow: [BoxShadow(color: (_hasSevereDanger ? Colors.red : Colors.teal).withOpacity(0.3), spreadRadius: 1, blurRadius: 5, offset: const Offset(0, 3))],
                 ),
                 child: Center(
                   child: Text(
@@ -1808,6 +1700,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                               itemCount: _meds.length,
                               itemBuilder: (context, index) {
                                 final med = _meds[index];
+                                bool isMedSevere = med['is_severe_danger'] == true;
 
                                 return Container(
                                   margin: const EdgeInsets.only(bottom: 12),
@@ -1839,7 +1732,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                       decoration: BoxDecoration(
                                         color: Colors.white,
                                         borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(color: Colors.grey.shade200),
+                                        border: Border.all(color: isMedSevere ? Colors.redAccent : Colors.grey.shade200, width: isMedSevere ? 2.0 : 1.0),
                                         boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 3)],
                                       ),
                                       child: Column(
@@ -1849,15 +1742,19 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                             children: [
                                               Expanded(
-                                                  child: Row(
+                                                child: Row(
                                                   children: [
+                                                    if (isMedSevere) ...[
+                                                      const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 24),
+                                                      const SizedBox(width: 6),
+                                                    ],
                                                     Expanded(
                                                       child: Text(
                                                         med['raw_name'] ?? '未知藥品', 
-                                                        style: const TextStyle(
+                                                        style: TextStyle(
                                                           fontSize: 18, 
                                                           fontWeight: FontWeight.bold, 
-                                                          color: Colors.black87,
+                                                          color: isMedSevere ? Colors.redAccent : Colors.black87
                                                         )
                                                       ),
                                                     ),
@@ -1878,8 +1775,8 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                                 },
                                                 child: Container(
                                                   width: 35, height: 35,
-                                                  decoration: BoxDecoration(color: Colors.teal.shade50, shape: BoxShape.circle),
-                                                  child: const Center(child: Icon(Icons.info_outline, color: Colors.teal, size: 18)),
+                                                  decoration: BoxDecoration(color: isMedSevere ? Colors.red.withOpacity(0.1) : Colors.teal.shade50, shape: BoxShape.circle),
+                                                  child: Center(child: Icon(Icons.info_outline, color: isMedSevere ? Colors.redAccent : Colors.teal, size: 18)),
                                                 ),
                                               )
                                             ],
@@ -1892,26 +1789,28 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
                                             const Divider(),
                                             const SizedBox(height: 4),
                                             ...(med['warnings'] as List).map<Widget>((warn) {
+                                              bool isConflict = warn['is_drug_conflict'] == true;
                                               return Padding(
                                                 padding: const EdgeInsets.only(top: 4.0),
                                                 child: Row(
                                                   crossAxisAlignment: CrossAxisAlignment.start,
                                                   children: [
-                                                    const Icon(Icons.gpp_maybe, size: 16, color: Colors.orange),
+                                                    Icon(Icons.gpp_maybe, size: 16, color: isConflict ? Colors.redAccent : Colors.orange),
                                                     const SizedBox(width: 4),
                                                     Expanded(
                                                       child: Text(
                                                         '【${warn['conflict_target']}】${warn['warning_desc']}',
-                                                        style: const TextStyle(
+                                                        style: TextStyle(
                                                           fontSize: 12,
-                                                          color: Colors.black87,
+                                                          color: isConflict ? Colors.redAccent : Colors.black87,
+                                                          fontWeight: isConflict ? FontWeight.bold : FontWeight.normal,
                                                         ),
                                                       ),
                                                     ),
                                                   ],
                                                 ),
                                               );
-                                            }).toList()
+                                            })
                                           ]
                                         ],
                                       ),
@@ -1947,7 +1846,18 @@ class ReminderSettingsPage extends StatefulWidget {
 }
 
 class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
+  int _reminderViewIndex = 0;
+  bool _isTodayLoading = true;
+  bool _todayLoadFailed = false;
+  bool _todayMissingUser = false;
+  String? _todayErrorDetail;
+  String? _todayDate;
+  int _todaySkippedInvalidCount = 0;
+  List<Map<String, dynamic>> _todayReminders = [];
+  final Map<int, String> _submittingReminderStatuses = {};
+
   bool _isPrescriptionsLoading = true;
+  bool _prescriptionsLoadFailed = false;
   bool _isDrugsLoading = false;
   List<dynamic> _prescriptions = [];
   
@@ -1958,68 +1868,1061 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
 
   // 🌟 核心資料結構：將藥品依照「頻率」分類群組
   Map<String, List<dynamic>> _groupedDrugs = {};
-  Map<String, List<String>> _groupTimes = {};
-  Map<String, List<String>> _groupTags = {};
+  final Map<String, List<String>> _groupTimes = {};
+  final Map<String, List<String>> _groupTags = {};
+
+  bool _isReminderListLoading = false;
+  bool _reminderListLoadFailed = false;
+  String? _reminderListErrorMessage;
+  int _reminderListSkippedInvalidCount = 0;
+  List<Map<String, dynamic>> _savedReminders = [];
+  bool _isBatchSaving = false;
+  final Set<int> _togglingReminderIds = {};
+  final Set<int> _deletingReminderIds = {};
+
+  static const List<String> _standardReminderTags = [
+    '早飯後',
+    '午飯後',
+    '晚飯後',
+    '睡前',
+  ];
 
   @override
   void initState() {
     super.initState();
+    _fetchTodayReminders();
     _fetchUserPrescriptions(); // 頁面載入時先抓取該用戶的所有藥單
+  }
+
+  int? _parsePositiveInt(dynamic value) {
+    if (value is int && value > 0) return value;
+    final parsed = int.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed > 0 ? parsed : null;
+  }
+
+  int? _reminderTimeSortKey(dynamic value) {
+    if (value is! String) return null;
+    final parts = value.trim().split(':');
+    if (parts.length < 2 || parts.length > 3) return null;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    final second = parts.length == 3 ? int.tryParse(parts[2]) : 0;
+    if (hour == null ||
+        minute == null ||
+        second == null ||
+        hour < 0 ||
+        hour > 23 ||
+        minute < 0 ||
+        minute > 59 ||
+        second < 0 ||
+        second > 59) {
+      return null;
+    }
+    return hour * 3600 + minute * 60 + second;
+  }
+
+  String _twoDigits(int value) => value.toString().padLeft(2, '0');
+
+  String _formatLocalDate(DateTime value) {
+    return '${value.year}-${_twoDigits(value.month)}-${_twoDigits(value.day)}';
+  }
+
+  String _formatLocalDateTime(DateTime value) {
+    return '${_formatLocalDate(value)} '
+        '${_twoDigits(value.hour)}:${_twoDigits(value.minute)}:${_twoDigits(value.second)}';
+  }
+
+  String? _formatTodayDate(String? value) {
+    if (value == null) return null;
+    final parsed = DateTime.tryParse(value);
+    if (parsed == null) return null;
+    return '${parsed.year}/${_twoDigits(parsed.month)}/${_twoDigits(parsed.day)}';
+  }
+
+  String _formatReminderTime(String value) {
+    final parts = value.split(':');
+    return parts.length >= 2 ? '${parts[0]}:${parts[1]}' : value;
+  }
+
+  String? _formatTakenAt(dynamic value) {
+    if (value is! String || value.trim().isEmpty) return null;
+    final normalized = value.trim().replaceFirst('T', ' ');
+    final timePart = normalized.contains(' ')
+        ? normalized.split(' ').last
+        : normalized;
+    final parts = timePart.split(':');
+    if (parts.length < 2) return null;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) return null;
+    return '${_twoDigits(hour)}:${_twoDigits(minute)}';
+  }
+
+  String? _displayRemainingAmount(dynamic value) {
+    if (value is int && value >= 0) return value.toString();
+    if (value is num && value >= 0) return value.toString();
+    if (value is String && value.trim().isNotEmpty) {
+      final parsed = num.tryParse(value.trim());
+      if (parsed != null && parsed >= 0) return value.trim();
+    }
+    return null;
+  }
+
+  String? _canonicalReminderTag(dynamic value) {
+    if (value is! String) return null;
+    switch (value.trim()) {
+      case '早飯後':
+      case '早餐後':
+        return '早飯後';
+      case '午飯後':
+      case '午餐後':
+      case '中午':
+        return '午飯後';
+      case '晚飯後':
+      case '晚餐後':
+        return '晚飯後';
+      case '睡前':
+      case '睡覺前':
+        return '睡前';
+      default:
+        return null;
+    }
+  }
+
+  String? _normalizeReminderTime(dynamic value) {
+    final sortKey = _reminderTimeSortKey(value);
+    if (sortKey == null) return null;
+    final hour = sortKey ~/ 3600;
+    final minute = (sortKey % 3600) ~/ 60;
+    final second = sortKey % 60;
+    return '${_twoDigits(hour)}:${_twoDigits(minute)}:${_twoDigits(second)}';
+  }
+
+  void _showReminderMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.redAccent : Colors.teal,
+      ),
+    );
+  }
+
+  Future<void> _fetchTodayReminders() async {
+    if (mounted) {
+      setState(() {
+        _isTodayLoading = true;
+        _todayLoadFailed = false;
+        _todayMissingUser = false;
+        _todayErrorDetail = null;
+      });
+    }
+
+    List<Map<String, dynamic>>? loadedReminders;
+    String? loadedDate;
+    String? errorDetail;
+    bool loadFailed = false;
+    bool missingUser = false;
+    int skippedInvalidCount = 0;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('user_id');
+      if (userId == null) {
+        loadFailed = true;
+        missingUser = true;
+      } else {
+        final uri = Uri.parse(
+          '$API_BASE_URL/medications/api/reminders/today/',
+        ).replace(queryParameters: {'user_id': userId.toString()});
+        final response = await http
+            .get(uri)
+            .timeout(const Duration(seconds: 15));
+
+        Map<String, dynamic>? responseData;
+        try {
+          final decoded = json.decode(utf8.decode(response.bodyBytes));
+          if (decoded is Map) {
+            responseData = Map<String, dynamic>.from(decoded);
+          }
+        } catch (e) {
+          debugPrint('今日提醒 response 解析失敗: $e');
+        }
+
+        final backendMessage = responseData?['message'];
+        if (backendMessage is String && backendMessage.trim().isNotEmpty) {
+          errorDetail = backendMessage.trim();
+        }
+
+        final rawDate = responseData?['date'];
+        final formattedDate =
+            rawDate is String ? _formatTodayDate(rawDate) : null;
+        final rawItems = responseData?['data'];
+        final isTransportSuccess =
+            response.statusCode >= 200 && response.statusCode < 300;
+
+        if (isTransportSuccess &&
+            responseData?['status'] == 'success' &&
+            formattedDate != null &&
+            rawItems is List) {
+          final validItems = <Map<String, dynamic>>[];
+          for (final rawItem in rawItems) {
+            if (rawItem is! Map) {
+              skippedInvalidCount++;
+              continue;
+            }
+
+            final item = Map<String, dynamic>.from(rawItem);
+            final remindId = _parsePositiveInt(item['remind_id']);
+            final sortKey = _reminderTimeSortKey(item['remind_time']);
+            final status = item['status'];
+            final frequencyTag = item['frequency_tag'];
+            final medCh = item['med_ch'];
+            final rawName = item['raw_name'];
+            final drugName = medCh is String && medCh.trim().isNotEmpty
+                ? medCh.trim()
+                : rawName is String && rawName.trim().isNotEmpty
+                    ? rawName.trim()
+                    : null;
+
+            if (remindId == null ||
+                sortKey == null ||
+                status is! String ||
+                status.trim().isEmpty ||
+                frequencyTag is! String ||
+                frequencyTag.trim().isEmpty ||
+                drugName == null) {
+              skippedInvalidCount++;
+              continue;
+            }
+
+            item['remind_id'] = remindId;
+            item['_sort_key'] = sortKey;
+            item['_display_drug_name'] = drugName;
+            validItems.add(item);
+          }
+
+          if (rawItems.isNotEmpty && validItems.isEmpty) {
+            loadFailed = true;
+          } else {
+            validItems.sort(
+              (a, b) => (a['_sort_key'] as int).compareTo(
+                b['_sort_key'] as int,
+              ),
+            );
+            loadedReminders = validItems;
+            loadedDate = formattedDate;
+          }
+        } else {
+          loadFailed = true;
+        }
+      }
+    } catch (e) {
+      debugPrint('今日提醒載入失敗: $e');
+      loadFailed = true;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      if (loadedReminders != null && loadedDate != null) {
+        _todayReminders = loadedReminders!;
+        _todayDate = loadedDate;
+      }
+      _todaySkippedInvalidCount = skippedInvalidCount;
+      _todayLoadFailed = loadFailed;
+      _todayMissingUser = missingUser;
+      _todayErrorDetail = loadFailed ? errorDetail : null;
+      _isTodayLoading = false;
+    });
   }
 
   // 🌟 1. 獲取使用者藥單清單 (用來塞下拉選單)
   Future<void> _fetchUserPrescriptions() async {
+    if (mounted) {
+      setState(() {
+        _isPrescriptionsLoading = true;
+        _prescriptionsLoadFailed = false;
+      });
+    }
+
+    List<dynamic>? loadedPrescriptions;
+    bool loadFailed = false;
+
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('user_id');
       if (userId == null) {
-        setState(() => _isPrescriptionsLoading = false);
-        return;
-      }
+        loadFailed = true;
+      } else {
+        final response = await http
+            .get(
+              Uri.parse(
+                '$API_BASE_URL/medications/api/prescriptions/$userId/',
+              ),
+            )
+            .timeout(const Duration(seconds: 15));
+        final data = json.decode(utf8.decode(response.bodyBytes));
 
-      final response = await http.get(
-        Uri.parse('$API_BASE_URL/medications/api/prescriptions/$userId/'),
-      );
-      final data = json.decode(utf8.decode(response.bodyBytes));
-
-      if (response.statusCode == 200 && data['status'] == 'success') {
-        setState(() {
-          _prescriptions = data['data'] ?? [];
-          _isPrescriptionsLoading = false;
-        });
+        if (response.statusCode == 200 &&
+            data is Map &&
+            data['status'] == 'success' &&
+            data['data'] is List) {
+          loadedPrescriptions = List<dynamic>.from(data['data']);
+        } else {
+          loadFailed = true;
+        }
       }
     } catch (e) {
       debugPrint('鬧鐘頁面獲取藥單失敗: $e');
-      setState(() => _isPrescriptionsLoading = false);
+      loadFailed = true;
     }
+
+    if (!mounted) return;
+    setState(() {
+      if (loadedPrescriptions != null) {
+        _prescriptions = loadedPrescriptions!;
+      }
+      _prescriptionsLoadFailed = loadFailed;
+      _isPrescriptionsLoading = false;
+    });
+  }
+
+  Widget _buildPrescriptionsLoadError() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.cloud_off_outlined, color: Colors.grey.shade500, size: 48),
+          const SizedBox(height: 14),
+          const Text(
+            '無法載入提醒資料，請稍後再試',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, color: Colors.black87),
+          ),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: _fetchUserPrescriptions,
+            icon: const Icon(Icons.refresh),
+            label: const Text('重新載入'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.teal,
+              side: const BorderSide(color: Colors.teal),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNoPrescriptionsState() {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.description_outlined, color: Colors.grey, size: 48),
+          SizedBox(height: 14),
+          Text(
+            '尚無可設定提醒的藥單',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _isDuplicateTakingRecordMessage(String? message) {
+    if (message == null) return false;
+    return message.contains('重複打卡') ||
+        (message.contains('鬧鐘時段') && message.contains('記錄為'));
+  }
+
+  Future<void> _recordTakingStatus(
+    Map<String, dynamic> reminder,
+    String status, {
+    bool force = false,
+    DateTime? recordedAt,
+  }) async {
+    final remindId = _parsePositiveInt(reminder['remind_id']);
+    if (remindId == null || _submittingReminderStatuses.containsKey(remindId)) {
+      return;
+    }
+
+    final requestTime = recordedAt ?? DateTime.now();
+    const fallbackError = '操作失敗，請稍後再試';
+    String errorMessage = fallbackError;
+    String? backendMessage;
+    bool succeeded = false;
+    bool shouldConfirmOverwrite = false;
+
+    setState(() => _submittingReminderStatuses[remindId] = status);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('user_id');
+      if (userId == null) {
+        errorMessage = '登入資訊已失效，請重新登入。';
+      } else {
+        final response = await http
+            .post(
+              Uri.parse('$API_BASE_URL/medications/api/history/record/'),
+              headers: {'Content-Type': 'application/json'},
+              body: json.encode({
+                'user_id': userId,
+                'remind_id': remindId,
+                'status': status,
+                'record_date': _formatLocalDate(requestTime),
+                'actual_taken_at': _formatLocalDateTime(requestTime),
+                'force': force,
+              }),
+            )
+            .timeout(const Duration(seconds: 15));
+
+        Map<String, dynamic>? responseData;
+        try {
+          final decoded = json.decode(utf8.decode(response.bodyBytes));
+          if (decoded is Map) {
+            responseData = Map<String, dynamic>.from(decoded);
+          }
+        } catch (e) {
+          debugPrint('服藥打卡 response 解析失敗: $e');
+        }
+
+        final message = responseData?['message'];
+        if (message is String && message.trim().isNotEmpty) {
+          backendMessage = message.trim();
+        }
+
+        final isTransportSuccess =
+            response.statusCode >= 200 && response.statusCode < 300;
+        if (isTransportSuccess && responseData?['status'] == 'success') {
+          succeeded = true;
+        } else if (response.statusCode == 400 &&
+            !force &&
+            _isDuplicateTakingRecordMessage(backendMessage)) {
+          shouldConfirmOverwrite = true;
+        } else if (backendMessage != null) {
+          errorMessage = backendMessage!;
+        }
+      }
+    } catch (e) {
+      debugPrint('服藥打卡失敗: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _submittingReminderStatuses.remove(remindId));
+      }
+    }
+
+    if (!mounted) return;
+
+    if (succeeded) {
+      await _fetchTodayReminders();
+      if (!mounted) return;
+      if (backendMessage != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(backendMessage!), backgroundColor: Colors.teal),
+        );
+      }
+      return;
+    }
+
+    if (shouldConfirmOverwrite) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '確認重新覆蓋',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: const Text('今日該時段已記錄過，是否重新覆蓋？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+              child: const Text('確定', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed == true && mounted) {
+        await _recordTakingStatus(
+          reminder,
+          status,
+          force: true,
+          recordedAt: requestTime,
+        );
+      }
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(errorMessage), backgroundColor: Colors.redAccent),
+    );
+  }
+
+  Widget _buildTodayLoadError() {
+    final primaryMessage = _todayMissingUser
+        ? '登入資訊已失效，請重新登入。'
+        : '無法載入今日服藥日程，請稍後再試';
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.event_busy, color: Colors.grey.shade500, size: 50),
+            const SizedBox(height: 14),
+            Text(
+              primaryMessage,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16, color: Colors.black87),
+            ),
+            if (!_todayMissingUser && _todayErrorDetail != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _todayErrorDetail!,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
+            ],
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: _fetchTodayReminders,
+              icon: const Icon(Icons.refresh),
+              label: const Text('重新載入'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.teal,
+                side: const BorderSide(color: Colors.teal),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTodayReminderStatus(Map<String, dynamic> reminder) {
+    final status = reminder['status'].toString().trim();
+    final remindId = reminder['remind_id'] as int;
+    final submittingStatus = _submittingReminderStatuses[remindId];
+
+    if (status == '已吃') {
+      final takenAt = _formatTakenAt(reminder['taken_at']);
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: Colors.teal.shade50,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          takenAt == null ? '✓ 已吃' : '✓ 已吃 $takenAt',
+          style: const TextStyle(
+            color: Colors.teal,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+
+    if (status == '略過') {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          '已略過',
+          style: TextStyle(
+            color: Colors.grey.shade700,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+
+    if (status != '未吃') {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade50,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.orange.shade200),
+        ),
+        child: const Text(
+          '狀態資料異常',
+          style: TextStyle(
+            color: Colors.orange,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+
+    final isSubmitting = submittingStatus != null;
+    return Row(
+      children: [
+        Expanded(
+          child: ElevatedButton(
+            onPressed: isSubmitting
+                ? null
+                : () => _recordTakingStatus(reminder, '已吃'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: submittingStatus == '已吃'
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Text('已吃'),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: OutlinedButton(
+            onPressed: isSubmitting
+                ? null
+                : () => _recordTakingStatus(reminder, '略過'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.grey.shade700,
+              side: BorderSide(color: Colors.grey.shade400),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: submittingStatus == '略過'
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.grey,
+                    ),
+                  )
+                : const Text('略過'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTodayReminderCard(Map<String, dynamic> reminder) {
+    final hospitalName = reminder['hospital_name'];
+    final remainingAmount =
+        _displayRemainingAmount(reminder['remaining_amount']);
+    return Card(
+      elevation: 2,
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 9,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    _formatReminderTime(reminder['remind_time'] as String),
+                    style: const TextStyle(
+                      color: Colors.teal,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        reminder['frequency_tag'].toString(),
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        reminder['_display_drug_name'].toString(),
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (hospitalName is String && hospitalName.trim().isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                hospitalName.trim(),
+                style: TextStyle(color: Colors.grey.shade700),
+              ),
+            ],
+            if (remainingAmount != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                '剩餘：$remainingAmount 顆',
+                style: const TextStyle(
+                  color: Colors.black87,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+            const SizedBox(height: 14),
+            _buildTodayReminderStatus(reminder),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTodayView() {
+    if (_isTodayLoading) {
+      return const Center(
+        child: CircularProgressIndicator(color: Colors.teal),
+      );
+    }
+    if (_todayLoadFailed) return _buildTodayLoadError();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '今天',
+                style: TextStyle(
+                  color: Colors.teal,
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _todayDate ?? '',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 15),
+              ),
+            ],
+          ),
+        ),
+        if (_todaySkippedInvalidCount > 0)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.orange.shade50,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '有 $_todaySkippedInvalidCount 筆提醒資料格式錯誤，已略過顯示。',
+              style: TextStyle(color: Colors.orange.shade800, fontSize: 13),
+            ),
+          ),
+        Expanded(
+          child: _todayReminders.isEmpty
+              ? const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.event_available_outlined,
+                        color: Colors.grey,
+                        size: 50,
+                      ),
+                      SizedBox(height: 14),
+                      Text(
+                        '今天沒有需要服用的藥物',
+                        style: TextStyle(fontSize: 16, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 60),
+                  itemCount: _todayReminders.length,
+                  itemBuilder: (context, index) {
+                    return _buildTodayReminderCard(_todayReminders[index]);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _loadPrescriptionReminderSettings(int prescriptionId) async {
+    if (!mounted) return;
+    setState(() {
+      _isDrugsLoading = true;
+      _isReminderListLoading = true;
+      _reminderListLoadFailed = false;
+      _reminderListErrorMessage = null;
+      _reminderListSkippedInvalidCount = 0;
+      _drugs = [];
+      _groupedDrugs = {};
+      _groupTags.clear();
+      _groupTimes.clear();
+      _savedReminders = [];
+    });
+
+    await Future.wait([
+      _fetchDrugsForPrescription(prescriptionId),
+      _fetchRemindersForPrescription(prescriptionId),
+    ]);
+
+    if (!mounted || _selectedPrescriptionId != prescriptionId) return;
+    setState(_applySavedRemindersToEditor);
+  }
+
+  Future<void> _fetchRemindersForPrescription(int prescriptionId) async {
+    if (mounted && _selectedPrescriptionId == prescriptionId) {
+      setState(() {
+        _isReminderListLoading = true;
+        _reminderListLoadFailed = false;
+        _reminderListErrorMessage = null;
+      });
+    }
+
+    List<Map<String, dynamic>>? loadedReminders;
+    String? errorMessage;
+    int skippedInvalidCount = 0;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('user_id');
+      if (userId == null) {
+        errorMessage = '登入資訊已失效，請重新登入。';
+      } else {
+        final uri = Uri.parse(
+          '$API_BASE_URL/medications/api/reminders/list/',
+        ).replace(
+          queryParameters: {
+            'prescription_id': prescriptionId.toString(),
+            'user_id': userId.toString(),
+            'active_only': 'false',
+          },
+        );
+        final response = await http
+            .get(uri, headers: const {'Accept': 'application/json'})
+            .timeout(const Duration(seconds: 15));
+
+        Map<String, dynamic>? responseData;
+        try {
+          final decoded = json.decode(utf8.decode(response.bodyBytes));
+          if (decoded is Map) {
+            responseData = Map<String, dynamic>.from(decoded);
+          }
+        } catch (e) {
+          debugPrint('提醒列表 response 解析失敗: $e');
+        }
+
+        final backendMessage = responseData?['message'];
+        final isTransportSuccess =
+            response.statusCode >= 200 && response.statusCode < 300;
+        final rawItems = responseData?['data'];
+
+        if (isTransportSuccess &&
+            responseData?['status'] == 'success' &&
+            rawItems is List) {
+          final validItems = <Map<String, dynamic>>[];
+          for (final rawItem in rawItems) {
+            if (rawItem is! Map) {
+              skippedInvalidCount++;
+              continue;
+            }
+
+            final item = Map<String, dynamic>.from(rawItem);
+            final remindId = _parsePositiveInt(item['remind_id']);
+            final prescriptionDrugId =
+                _parsePositiveInt(item['prescription_drug_id']);
+            final frequencyTag = item['frequency_tag'];
+            final normalizedTime = _normalizeReminderTime(item['remind_time']);
+            final isActive = item['is_active'];
+            if (remindId == null ||
+                prescriptionDrugId == null ||
+                frequencyTag is! String ||
+                frequencyTag.trim().isEmpty ||
+                normalizedTime == null ||
+                isActive is! bool) {
+              skippedInvalidCount++;
+              continue;
+            }
+
+            item['remind_id'] = remindId;
+            item['prescription_drug_id'] = prescriptionDrugId;
+            item['frequency_tag'] = frequencyTag.trim();
+            item['remind_time'] = normalizedTime;
+            validItems.add(item);
+          }
+          if (rawItems.isNotEmpty && validItems.isEmpty) {
+            errorMessage = '提醒列表資料格式錯誤，請稍後再試。';
+          } else {
+            validItems.sort(
+              (a, b) => (_reminderTimeSortKey(a['remind_time']) ?? 0)
+                  .compareTo(_reminderTimeSortKey(b['remind_time']) ?? 0),
+            );
+            loadedReminders = validItems;
+          }
+        } else if (backendMessage is String &&
+            backendMessage.trim().isNotEmpty) {
+          errorMessage = backendMessage.trim();
+        } else {
+          errorMessage = '無法載入已設定提醒，請稍後再試。';
+        }
+      }
+    } catch (e) {
+      debugPrint('載入已設定提醒失敗: $e');
+      errorMessage = '無法載入已設定提醒，請稍後再試。';
+    }
+
+    if (!mounted || _selectedPrescriptionId != prescriptionId) return;
+    setState(() {
+      if (loadedReminders != null) {
+        _savedReminders = loadedReminders!;
+      }
+      _reminderListSkippedInvalidCount = skippedInvalidCount;
+      _reminderListLoadFailed = errorMessage != null;
+      _reminderListErrorMessage = errorMessage;
+      _isReminderListLoading = false;
+      if (loadedReminders != null) {
+        _applySavedRemindersToEditor();
+      }
+    });
+  }
+
+  void _applySavedRemindersToEditor() {
+    if (_groupedDrugs.isEmpty || _savedReminders.isEmpty) return;
+
+    _groupedDrugs.forEach((frequency, drugList) {
+      final drugIds = drugList
+          .map((drug) => _parsePositiveInt(
+                drug['id'] ?? drug['prescription_drug_id'],
+              ))
+          .whereType<int>()
+          .toSet();
+      final loadedTagTimes = <String, String>{};
+
+      for (final reminder in _savedReminders) {
+        if (!drugIds.contains(reminder['prescription_drug_id'])) continue;
+        final canonicalTag = _canonicalReminderTag(reminder['frequency_tag']);
+        final normalizedTime =
+            _normalizeReminderTime(reminder['remind_time']);
+        if (canonicalTag == null || normalizedTime == null) continue;
+        loadedTagTimes.putIfAbsent(
+          canonicalTag,
+          () => _formatReminderTime(normalizedTime),
+        );
+      }
+
+      if (loadedTagTimes.isEmpty) return;
+      final sortedTags = loadedTagTimes.keys.toList()
+        ..sort(
+          (a, b) => _standardReminderTags
+              .indexOf(a)
+              .compareTo(_standardReminderTags.indexOf(b)),
+        );
+      _groupTags[frequency] = sortedTags;
+      _groupTimes[frequency] = [
+        for (final tag in sortedTags) loadedTagTimes[tag]!,
+      ];
+    });
+  }
+
+  bool? _savedReminderActiveState(int prescriptionDrugId, String tag) {
+    for (final reminder in _savedReminders) {
+      if (reminder['prescription_drug_id'] == prescriptionDrugId &&
+          _canonicalReminderTag(reminder['frequency_tag']) == tag &&
+          reminder['is_active'] is bool) {
+        return reminder['is_active'] as bool;
+      }
+    }
+    return null;
   }
 
   // 🌟 2. 當選取某張藥單時，獲取其底下的所有藥品明細
   Future<void> _fetchDrugsForPrescription(int prescriptionId) async {
-    setState(() {
-      _isDrugsLoading = true;
-      _drugs = [];
-      _groupedDrugs = {};
-    });
+    List<dynamic>? loadedDrugs;
 
     try {
-      final response = await http.get(
-        Uri.parse('$API_BASE_URL/medications/api/prescription_details/$prescriptionId/'),
-      );
+      final response = await http
+          .get(
+            Uri.parse(
+              '$API_BASE_URL/medications/api/prescription_details/$prescriptionId/',
+            ),
+          )
+          .timeout(const Duration(seconds: 15));
       final data = json.decode(utf8.decode(response.bodyBytes));
 
-      if (response.statusCode == 200 && data['status'] == 'success') {
-        _drugs = data['data'] ?? [];
-        _groupDrugsByFrequency(); // 執行自動分群演算法
+      if (response.statusCode >= 200 &&
+          response.statusCode < 300 &&
+          data is Map &&
+          data['status'] == 'success' &&
+          data['data'] is List) {
+        loadedDrugs = List<dynamic>.from(data['data']);
       }
     } catch (e) {
       debugPrint('獲取藥品明細失敗: $e');
-    } finally {
-      setState(() => _isDrugsLoading = false);
     }
+
+    if (!mounted || _selectedPrescriptionId != prescriptionId) return;
+    setState(() {
+      _drugs = loadedDrugs ?? [];
+      _groupDrugsByFrequency();
+      _applySavedRemindersToEditor();
+      _isDrugsLoading = false;
+    });
   }
 
-  // 🌟 3. 核心演算法：依照藥品服用頻率自動分群，並初始化預設 Tag 與時間 
+  // 🌟 3. 核心演算法：依照藥品服用頻率自動分群，並初始化預設 Tag 與時間
   void _groupDrugsByFrequency() {
     _groupedDrugs.clear();
     _groupTimes.clear();
@@ -2038,16 +2941,16 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
       List<String> times = [];
 
       if (freq.contains('三') || freq.contains('3') || freq.toLowerCase().contains('tid')) {
-        tags = ['早餐後', '午餐後', '晚餐後'];
+        tags = ['早飯後', '午飯後', '晚飯後'];
         times = ['08:30', '12:30', '18:30'];
       } else if (freq.contains('二') || freq.contains('2') || freq.toLowerCase().contains('bid')) {
-        tags = ['早餐後', '晚餐後'];
+        tags = ['早飯後', '晚飯後'];
         times = ['08:30', '18:30'];
       } else if (freq.contains('睡前') || freq.toLowerCase().contains('hs')) {
         tags = ['睡前'];
         times = ['21:30'];
       } else {
-        tags = ['隨餐'];
+        tags = ['早飯後'];
         times = ['08:30'];
       }
 
@@ -2109,101 +3012,542 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
     );
   }
 
-  // 🌟 5. 將分群結構轉回以「藥品」為單位的 API Payload 並上傳 
-  Future<void> _saveReminders() async {
-    if (_selectedPrescriptionId == null || _drugs.isEmpty) return;
-
-    final prefs = await SharedPreferences.getInstance();
-    final userId = prefs.getInt('user_id');
-    if (!mounted) return;
-    if (userId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('登入資訊已失效，無法儲存提醒。請重新登入後再試。'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
+  Future<void> _toggleReminder(
+    Map<String, dynamic> reminder,
+    bool requestedValue,
+  ) async {
+    final remindId = _parsePositiveInt(reminder['remind_id']);
+    final originalValue = reminder['is_active'];
+    if (remindId == null ||
+        originalValue is! bool ||
+        _togglingReminderIds.contains(remindId) ||
+        _deletingReminderIds.contains(remindId)) {
       return;
     }
 
-    final pid = _selectedPrescriptionId;
-    List<Map<String, dynamic>> drugsPayload = [];
+    String errorMessage = '提醒開關更新失敗，請稍後再試。';
+    bool succeeded = false;
+    bool confirmedValue = originalValue;
 
-    _groupedDrugs.forEach((freq, drugList) {
-      final tags = _groupTags[freq] ?? [];
-      final times = _groupTimes[freq] ?? [];
-
-      for (var drug in drugList) {
-        final drugId = drug['id']; 
-        if (drugId == null) continue;
-
-        List<Map<String, String>> remindersList = [];
-        for (int i = 0; i < tags.length; i++) {
-          remindersList.add({
-            "frequency_tag": tags[i],
-            "remind_time": "${times[i]}:00" 
-          });
-        }
-
-        drugsPayload.add({
-          "prescription_drug_id": drugId,
-          "reminders": remindersList
-        });
-      }
+    setState(() {
+      _togglingReminderIds.add(remindId);
+      reminder['is_active'] = requestedValue;
     });
 
-    final payload = {
-      "user_id": userId,
-      "prescription_id": pid,
-      "drugs": drugsPayload
-    };
-
     try {
-      debugPrint('👉 準備發送鬧鐘批次設定：${json.encode(payload)}');
-      final response = await http.post(
-        Uri.parse('$API_BASE_URL/medications/api/reminders/set/'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode(payload),
-      );
-
-      final data = json.decode(utf8.decode(response.bodyBytes));
-
-      if ((response.statusCode == 200 || response.statusCode == 201) && data['status'] == 'success') {        
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('🎉 ${data['message'] ?? "已成功同步雲端鬧鐘！"}'), backgroundColor: Colors.teal)
-        );
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('user_id');
+      if (userId == null) {
+        errorMessage = '登入資訊已失效，請重新登入。';
       } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('設定失敗：${data['message']}'), backgroundColor: Colors.redAccent)
-        );
+        final response = await http
+            .post(
+              Uri.parse(
+                '$API_BASE_URL/medications/api/reminders/$remindId/toggle/',
+              ),
+              headers: const {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+              },
+              body: json.encode({
+                'user_id': userId,
+                'is_active': requestedValue,
+              }),
+            )
+            .timeout(const Duration(seconds: 15));
+
+        Map<String, dynamic>? responseData;
+        try {
+          final decoded = json.decode(utf8.decode(response.bodyBytes));
+          if (decoded is Map) {
+            responseData = Map<String, dynamic>.from(decoded);
+          }
+        } catch (e) {
+          debugPrint('提醒開關 response 解析失敗: $e');
+        }
+
+        final backendMessage = responseData?['message'];
+        final responseValue = responseData?['data'] is Map
+            ? responseData!['data']['is_active']
+            : null;
+        final isTransportSuccess =
+            response.statusCode >= 200 && response.statusCode < 300;
+        if (isTransportSuccess &&
+            responseData?['status'] == 'success' &&
+            responseValue is bool) {
+          succeeded = true;
+          confirmedValue = responseValue;
+        } else if (backendMessage is String &&
+            backendMessage.trim().isNotEmpty) {
+          errorMessage = backendMessage.trim();
+        }
       }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('連線失敗：$e'), backgroundColor: Colors.redAccent));
+      debugPrint('提醒開關更新失敗: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          reminder['is_active'] = succeeded ? confirmedValue : originalValue;
+          _togglingReminderIds.remove(remindId);
+        });
+      }
+    }
+
+    if (!succeeded) {
+      _showReminderMessage(errorMessage, isError: true);
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F7F9),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: _isPrescriptionsLoading
-              ? const Center(child: CircularProgressIndicator(color: Colors.teal))
-              : Column(
-                  children: [
-                    // 標題卡片
-                    Container(
-                      width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 20),
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), spreadRadius: 1, blurRadius: 5)]),
-                      child: const Center(child: Text('吃藥提醒鬧鐘 ⏰', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.teal))),
-                    ),
-                    const SizedBox(height: 15),
+  Future<void> _confirmDeleteReminder(Map<String, dynamic> reminder) async {
+    final remindId = _parsePositiveInt(reminder['remind_id']);
+    if (remindId == null ||
+        _deletingReminderIds.contains(remindId) ||
+        _togglingReminderIds.contains(remindId)) {
+      return;
+    }
 
+    final rawTag = reminder['frequency_tag']?.toString() ?? '';
+    final frequencyTag = _canonicalReminderTag(rawTag) ?? rawTag;
+    final remindTime = _normalizeReminderTime(reminder['remind_time']);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: const Text(
+          '確定要刪除此提醒嗎？',
+          style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          '$frequencyTag  ${remindTime == null ? '' : _formatReminderTime(remindTime)}',
+          style: const TextStyle(fontSize: 16),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('刪除', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await _deleteReminder(reminder);
+    }
+  }
+
+  Future<void> _deleteReminder(Map<String, dynamic> reminder) async {
+    final remindId = _parsePositiveInt(reminder['remind_id']);
+    final prescriptionId = _selectedPrescriptionId;
+    if (remindId == null ||
+        prescriptionId == null ||
+        _deletingReminderIds.contains(remindId)) {
+      return;
+    }
+
+    String errorMessage = '提醒刪除失敗，請稍後再試。';
+    String? successMessage;
+    bool succeeded = false;
+    setState(() => _deletingReminderIds.add(remindId));
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('user_id');
+      if (userId == null) {
+        errorMessage = '登入資訊已失效，請重新登入。';
+      } else {
+        final response = await http.delete(
+          Uri.parse(
+            '$API_BASE_URL/medications/api/reminders/$remindId/delete/',
+          ),
+          headers: {
+            'X-User-Id': userId.toString(),
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+        ).timeout(const Duration(seconds: 15));
+
+        Map<String, dynamic>? responseData;
+        try {
+          final decoded = json.decode(utf8.decode(response.bodyBytes));
+          if (decoded is Map) {
+            responseData = Map<String, dynamic>.from(decoded);
+          }
+        } catch (e) {
+          debugPrint('刪除提醒 response 解析失敗: $e');
+        }
+
+        final backendMessage = responseData?['message'];
+        final isTransportSuccess =
+            response.statusCode >= 200 && response.statusCode < 300;
+        if (isTransportSuccess && responseData?['status'] == 'success') {
+          succeeded = true;
+          if (backendMessage is String && backendMessage.trim().isNotEmpty) {
+            successMessage = backendMessage.trim();
+          }
+        } else if (backendMessage is String &&
+            backendMessage.trim().isNotEmpty) {
+          errorMessage = backendMessage.trim();
+        }
+      }
+
+      if (succeeded &&
+          mounted &&
+          _selectedPrescriptionId == prescriptionId) {
+        if (successMessage != null) {
+          _showReminderMessage(successMessage!);
+        }
+        await _fetchRemindersForPrescription(prescriptionId);
+      }
+    } catch (e) {
+      debugPrint('刪除提醒失敗: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _deletingReminderIds.remove(remindId));
+      }
+    }
+
+    if (!succeeded) {
+      _showReminderMessage(errorMessage, isError: true);
+    }
+  }
+
+  // 🌟 5. 將分群結構轉回以「藥品」為單位的 API Payload 並上傳
+  Future<void> _saveReminders() async {
+    if (_isBatchSaving) return;
+    setState(() => _isBatchSaving = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('user_id');
+      if (userId == null) {
+        _showReminderMessage(
+          '登入資訊已失效，請重新登入。',
+          isError: true,
+        );
+        return;
+      }
+
+      final prescriptionId = _parsePositiveInt(_selectedPrescriptionId);
+      if (prescriptionId == null || _drugs.isEmpty) {
+        _showReminderMessage('提醒設定資料不足，請重新選擇藥單。', isError: true);
+        return;
+      }
+      if (_isReminderListLoading ||
+          _reminderListLoadFailed ||
+          _reminderListSkippedInvalidCount > 0) {
+        _showReminderMessage(
+          '請先成功載入完整的已設定提醒後再儲存。',
+          isError: true,
+        );
+        return;
+      }
+
+      final drugsPayload = <Map<String, dynamic>>[];
+      bool hasInvalidData = false;
+      int reminderCount = 0;
+
+      for (final entry in _groupedDrugs.entries) {
+        final tags = _groupTags[entry.key] ?? const <String>[];
+        final times = _groupTimes[entry.key] ?? const <String>[];
+        if (tags.isEmpty || tags.length != times.length) {
+          hasInvalidData = true;
+          break;
+        }
+
+        for (final drug in entry.value) {
+          final prescriptionDrugId = _parsePositiveInt(
+            drug['id'] ?? drug['prescription_drug_id'],
+          );
+          if (prescriptionDrugId == null) {
+            hasInvalidData = true;
+            break;
+          }
+
+          final remindersPayload = <Map<String, dynamic>>[];
+          for (int index = 0; index < tags.length; index++) {
+            final tag = tags[index];
+            final normalizedTime = _normalizeReminderTime(times[index]);
+            if (!_standardReminderTags.contains(tag) ||
+                normalizedTime == null) {
+              hasInvalidData = true;
+              break;
+            }
+            remindersPayload.add({
+              'frequency_tag': tag,
+              'remind_time': normalizedTime,
+              'is_active':
+                  _savedReminderActiveState(prescriptionDrugId, tag) ?? true,
+            });
+          }
+          if (hasInvalidData || remindersPayload.isEmpty) {
+            hasInvalidData = true;
+            break;
+          }
+
+          reminderCount += remindersPayload.length;
+          drugsPayload.add({
+            'prescription_drug_id': prescriptionDrugId,
+            'reminders': remindersPayload,
+          });
+        }
+        if (hasInvalidData) break;
+      }
+
+      if (hasInvalidData || drugsPayload.isEmpty || reminderCount == 0) {
+        _showReminderMessage(
+          '提醒設定資料不完整，請確認藥品、時段與時間。',
+          isError: true,
+        );
+        return;
+      }
+
+      final response = await http
+          .post(
+            Uri.parse('$API_BASE_URL/medications/api/reminders/set/'),
+            headers: const {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+            },
+            body: json.encode({
+              'user_id': userId,
+              'prescription_id': prescriptionId,
+              'drugs': drugsPayload,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      Map<String, dynamic>? responseData;
+      try {
+        final decoded = json.decode(utf8.decode(response.bodyBytes));
+        if (decoded is Map) {
+          responseData = Map<String, dynamic>.from(decoded);
+        }
+      } catch (e) {
+        debugPrint('儲存提醒 response 解析失敗: $e');
+      }
+
+      final backendMessage = responseData?['message'];
+      final isTransportSuccess =
+          response.statusCode >= 200 && response.statusCode < 300;
+      if (isTransportSuccess && responseData?['status'] == 'success') {
+        _showReminderMessage(
+          backendMessage is String && backendMessage.trim().isNotEmpty
+              ? backendMessage.trim()
+              : '提醒設定已儲存。',
+        );
+        if (mounted && _selectedPrescriptionId == prescriptionId) {
+          await _fetchRemindersForPrescription(prescriptionId);
+        }
+      } else {
+        _showReminderMessage(
+          backendMessage is String && backendMessage.trim().isNotEmpty
+              ? backendMessage.trim()
+              : '提醒設定儲存失敗，請稍後再試。',
+          isError: true,
+        );
+      }
+    } catch (e) {
+      debugPrint('儲存提醒失敗: $e');
+      _showReminderMessage('提醒設定儲存失敗，請稍後再試。', isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _isBatchSaving = false);
+      }
+    }
+  }
+
+  Widget _buildSavedReminderRow(Map<String, dynamic> reminder) {
+    final remindId = reminder['remind_id'] as int;
+    final isActive = reminder['is_active'] as bool;
+    final isToggling = _togglingReminderIds.contains(remindId);
+    final isDeleting = _deletingReminderIds.contains(remindId);
+    final rawTag = reminder['frequency_tag'].toString();
+    final frequencyTag = _canonicalReminderTag(rawTag) ?? rawTag;
+    final remindTime = _formatReminderTime(reminder['remind_time'].toString());
+    final rawName = reminder['raw_name'];
+
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.teal.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.teal.shade100),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (rawName is String && rawName.trim().isNotEmpty) ...[
+                  Text(
+                    rawName.trim(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.black87,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                Text(
+                  '$frequencyTag  $remindTime',
+                  style: const TextStyle(
+                    color: Colors.teal,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isToggling)
+            const Padding(
+              padding: EdgeInsets.only(right: 8),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.teal,
+                ),
+              ),
+            ),
+          Switch.adaptive(
+            value: isActive,
+            activeColor: Colors.teal,
+            onChanged: isToggling || isDeleting
+                ? null
+                : (value) => _toggleReminder(reminder, value),
+          ),
+          if (isDeleting)
+            const SizedBox(
+              width: 40,
+              height: 40,
+              child: Padding(
+                padding: EdgeInsets.all(11),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.redAccent,
+                ),
+              ),
+            )
+          else
+            IconButton(
+              tooltip: '刪除提醒',
+              onPressed: isToggling
+                  ? null
+                  : () => _confirmDeleteReminder(reminder),
+              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReminderListSection(int prescriptionId) {
+    if (_isReminderListLoading) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(20),
+          child: Center(
+            child: CircularProgressIndicator(color: Colors.teal),
+          ),
+        ),
+      );
+    }
+
+    if (_reminderListLoadFailed) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Text(
+                _reminderListErrorMessage ??
+                    '無法載入已設定提醒，請稍後再試。',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.black87),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () =>
+                    _fetchRemindersForPrescription(prescriptionId),
+                icon: const Icon(Icons.refresh),
+                label: const Text('重新載入'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.teal,
+                  side: const BorderSide(color: Colors.teal),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Card(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.notifications_active_outlined, color: Colors.teal),
+                SizedBox(width: 8),
+                Text(
+                  '已設定提醒',
+                  style: TextStyle(
+                    color: Colors.teal,
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            if (_reminderListSkippedInvalidCount > 0) ...[
+              const SizedBox(height: 10),
+              Text(
+                '有 $_reminderListSkippedInvalidCount 筆提醒資料格式錯誤，已略過顯示。',
+                style: TextStyle(
+                  color: Colors.orange.shade800,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+            if (_savedReminders.isEmpty) ...[
+              const SizedBox(height: 12),
+              const Text(
+                '此藥單尚未設定提醒，可使用下方時段建立。',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ] else
+              ..._savedReminders.map(_buildSavedReminderRow),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReminderSettingsView() {
+    return _isPrescriptionsLoading
+              ? const Center(child: CircularProgressIndicator(color: Colors.teal))
+              : _prescriptionsLoadFailed
+                  ? _buildPrescriptionsLoadError()
+                  : _prescriptions.isEmpty
+                      ? _buildNoPrescriptionsState()
+                      : Column(
+                  children: [
                     // 💡 下拉選單
                     DropdownButtonFormField<int>(
                       isExpanded: true, 
@@ -2212,7 +3556,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
                         filled: true, fillColor: Colors.white,
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       ),
-                      value: _selectedPrescriptionId,
+                      initialValue: _selectedPrescriptionId,
                       items: _prescriptions.map<DropdownMenuItem<int>>((p) {
                         return DropdownMenuItem<int>(
                           value: p['prescription_id'] as int,
@@ -2226,8 +3570,17 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
                       onChanged: (val) {
                         setState(() {
                           _selectedPrescriptionId = val;
-                          if (val != null) _fetchDrugsForPrescription(val);
+                          if (val == null) {
+                            _drugs = [];
+                            _groupedDrugs = {};
+                            _groupTags.clear();
+                            _groupTimes.clear();
+                            _savedReminders = [];
+                          }
                         });
+                        if (val != null) {
+                          _loadPrescriptionReminderSettings(val);
+                        }
                       },
                     ),
                     const SizedBox(height: 15),
@@ -2241,7 +3594,11 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
                               : _groupedDrugs.isEmpty
                                   ? const Center(child: Text('此藥單內目前沒有任何藥品明細', style: TextStyle(color: Colors.grey)))
                                   : ListView(
-                                      children: _groupedDrugs.keys.map((freq) {
+                                      children: [
+                                        _buildReminderListSection(
+                                          _selectedPrescriptionId!,
+                                        ),
+                                        ..._groupedDrugs.keys.map((freq) {
                                         final drugList = _groupedDrugs[freq]!;
                                         final tags = _groupTags[freq] ?? [];
                                         final times = _groupTimes[freq] ?? [];
@@ -2294,7 +3651,8 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
                                             ),
                                           ),
                                         );
-                                      }).toList(),
+                                      }),
+                                      ],
                                     ),
                     ),
                     
@@ -2310,18 +3668,348 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
                               foregroundColor: Colors.white,
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             ),
-                            onPressed: _saveReminders,
-                            child: const Text('儲存提醒鬧鐘設定', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
+                            onPressed: _isBatchSaving ||
+                                    _isReminderListLoading ||
+                                    _reminderListLoadFailed ||
+                                    _reminderListSkippedInvalidCount > 0
+                                ? null
+                                : _saveReminders,
+                            child: _isBatchSaving
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text('儲存提醒鬧鐘設定', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
                           ),
                         ),
                       )
                   ],
+                );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7F9),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(15),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.1),
+                      spreadRadius: 1,
+                      blurRadius: 5,
+                    ),
+                  ],
                 ),
+                child: const Center(
+                  child: Text(
+                    '吃藥提醒鬧鐘 ⏰',
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.teal,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              CupertinoSlidingSegmentedControl<int>(
+                groupValue: _reminderViewIndex,
+                backgroundColor: Colors.teal.shade50,
+                thumbColor: Colors.teal,
+                padding: const EdgeInsets.all(4),
+                children: {
+                  0: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 9,
+                    ),
+                    child: Text(
+                      '今日服藥日程',
+                      style: TextStyle(
+                        color: _reminderViewIndex == 0
+                            ? Colors.white
+                            : Colors.teal,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  1: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 9,
+                    ),
+                    child: Text(
+                      '藥單鬧鐘設定',
+                      style: TextStyle(
+                        color: _reminderViewIndex == 1
+                            ? Colors.white
+                            : Colors.teal,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                },
+                onValueChanged: (value) {
+                  if (value == null) return;
+                  setState(() => _reminderViewIndex = value);
+                },
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: _reminderViewIndex == 0
+                    ? _buildTodayView()
+                    : _buildReminderSettingsView(),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
+class _HealthBankConsentDialog extends StatefulWidget {
+  const _HealthBankConsentDialog();
+
+  @override
+  State<_HealthBankConsentDialog> createState() =>
+      _HealthBankConsentDialogState();
+}
+
+class _HealthBankConsentDialogState extends State<_HealthBankConsentDialog> {
+  static const int _countdownStart = 5;
+  int _secondsRemaining = _countdownStart;
+  Timer? _countdownTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_secondsRemaining <= 1) {
+        timer.cancel();
+        if (mounted) setState(() => _secondsRemaining = 0);
+        return;
+      }
+      if (mounted) setState(() => _secondsRemaining--);
+    });
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const headerColor = Color(0xFFC62828);
+    final canConfirm = _secondsRemaining == 0;
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.84;
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 560, maxHeight: maxHeight),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Material(
+            color: Colors.white,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: double.infinity,
+                  color: headerColor,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 18,
+                  ),
+                  child: const Text(
+                    '下載健康存摺資料供他方APP使用聲明',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      height: 1.35,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
+                    child: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text.rich(
+                          TextSpan(
+                            style: TextStyle(
+                              color: Color(0xFF333333),
+                              fontSize: 15,
+                              height: 1.65,
+                            ),
+                            children: [
+                              TextSpan(
+                                text: '「健康存摺」',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              TextSpan(
+                                text:
+                                    '存有您的健康資料，您可以經身分認證後下載個人至少三年的就醫及健康資料。',
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(height: 16),
+                        Text(
+                          '健康資料包含：',
+                          style: TextStyle(
+                            color: Color(0xFF222222),
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          '門診資料（西醫、中醫、牙醫）、住院資料、過敏藥物資料、檢驗（查）結果資料、影像或病理檢驗（查）報告摘要資料。',
+                          style: TextStyle(
+                            color: Color(0xFF333333),
+                            fontSize: 15,
+                            height: 1.65,
+                          ),
+                        ),
+                        SizedBox(height: 16),
+                        Text(
+                          '資料包含有個人隱私，下載後如欲提供他方使用，應請自行評估風險與責任。',
+                          style: TextStyle(
+                            color: Color(0xFF333333),
+                            fontSize: 15,
+                            height: 1.65,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        SizedBox(height: 16),
+                        Text.rich(
+                          TextSpan(
+                            style: TextStyle(
+                              color: Color(0xFF333333),
+                              fontSize: 15,
+                              height: 1.65,
+                            ),
+                            children: [
+                              TextSpan(
+                                text: '提醒您：',
+                                style: TextStyle(
+                                  color: headerColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              TextSpan(
+                                text:
+                                    '資料提供給此行動應用程式（APP）時，請充分了解自身權益，並留意是否只提供部分資料、使用期間，以及日後可要求刪除資料的權利。',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    border: Border(
+                      top: BorderSide(color: Color(0xFFE0E0E0)),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          '倒數計時 $_secondsRemaining 秒',
+                          style: TextStyle(
+                            color: canConfirm
+                                ? Colors.grey.shade600
+                                : headerColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.of(context).pop(false),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.grey.shade700,
+                                side: BorderSide(color: Colors.grey.shade400),
+                                minimumSize: const Size.fromHeight(48),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              child: const Text(
+                                '不產製',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: canConfirm
+                                  ? () => Navigator.of(context).pop(true)
+                                  : null,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: headerColor,
+                                disabledBackgroundColor:
+                                    headerColor.withOpacity(0.35),
+                                foregroundColor: Colors.white,
+                                disabledForegroundColor: Colors.white70,
+                                elevation: canConfirm ? 2 : 0,
+                                minimumSize: const Size.fromHeight(48),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              child: const Text(
+                                '是，我了解',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key});
 
@@ -2331,12 +4019,177 @@ class UserProfilePage extends StatefulWidget {
 
 class _UserProfilePageState extends State<UserProfilePage> {
   bool _isLoading = true;
+  bool _isHealthBankSyncing = false;
   Map<String, dynamic> _profileData = {};
+  int _selectedAdherenceDays = 7;
+  bool _isAdherenceLoading = true;
+  String? _adherenceError;
+  Map<String, dynamic>? _adherenceSummary;
+  String? _adherenceStartDate;
+  String? _adherenceEndDate;
+  int _adherenceRequestGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     _fetchUserProfile();
+    _fetchAdherenceStats(7);
+  }
+
+  int? _parseAdherenceCount(dynamic value) {
+    if (value is int && value >= 0) return value;
+    if (value is num && value >= 0 && value == value.roundToDouble()) {
+      return value.toInt();
+    }
+    if (value is String) {
+      final parsed = int.tryParse(value.trim());
+      if (parsed != null && parsed >= 0) return parsed;
+    }
+    return null;
+  }
+
+  double? _parseAdherenceRate(dynamic value) {
+    final parsed = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '');
+    if (parsed == null || !parsed.isFinite) return null;
+    return parsed;
+  }
+
+  String? _formatAdherenceDate(dynamic value) {
+    if (value is! String || value.trim().isEmpty) return null;
+    final parsed = DateTime.tryParse(value.trim());
+    if (parsed == null) return null;
+    return '${parsed.year}/${parsed.month.toString().padLeft(2, '0')}/'
+        '${parsed.day.toString().padLeft(2, '0')}';
+  }
+
+  bool _isAdherenceMapList(dynamic value) {
+    return value is List && value.every((item) => item is Map);
+  }
+
+  Future<void> _fetchAdherenceStats([int? requestedDays]) async {
+    final days = requestedDays ?? _selectedAdherenceDays;
+    if (!const [7, 14, 30].contains(days)) return;
+
+    final requestGeneration = ++_adherenceRequestGeneration;
+    if (mounted) {
+      setState(() {
+        _selectedAdherenceDays = days;
+        _isAdherenceLoading = true;
+        _adherenceError = null;
+      });
+    }
+
+    Map<String, dynamic>? loadedSummary;
+    String? loadedStartDate;
+    String? loadedEndDate;
+    String? errorMessage;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final storedUserId = prefs.get('user_id');
+      final userId = storedUserId is int
+          ? storedUserId
+          : int.tryParse(storedUserId?.toString() ?? '');
+
+      if (userId == null || userId <= 0) {
+        errorMessage = '登入資訊已失效，請重新登入。';
+      } else {
+        final uri = Uri.parse(
+          '$API_BASE_URL/medications/api/history/stats/',
+        ).replace(
+          queryParameters: {
+            'user_id': userId.toString(),
+            'days': days.toString(),
+          },
+        );
+        final response = await http
+            .get(uri, headers: const {'Accept': 'application/json'})
+            .timeout(const Duration(seconds: 15));
+
+        Map<String, dynamic>? responseData;
+        try {
+          final decoded = json.decode(utf8.decode(response.bodyBytes));
+          if (decoded is Map) {
+            responseData = Map<String, dynamic>.from(decoded);
+          }
+        } catch (e) {
+          debugPrint('服藥遵從率 response 解析失敗: $e');
+        }
+
+        final backendMessage = responseData?['message'];
+        final rawSummary = responseData?['summary'];
+        final isTransportSuccess =
+            response.statusCode >= 200 && response.statusCode < 300;
+
+        if (isTransportSuccess &&
+            responseData?['status'] == 'success' &&
+            rawSummary is Map &&
+            _isAdherenceMapList(responseData?['daily_stats']) &&
+            _isAdherenceMapList(responseData?['recent_history'])) {
+          final summary = Map<String, dynamic>.from(rawSummary);
+          final totalExpected =
+              _parseAdherenceCount(summary['total_expected']);
+          final totalTaken = _parseAdherenceCount(summary['total_taken']);
+          final totalSkipped =
+              _parseAdherenceCount(summary['total_skipped']);
+          final totalMissed = _parseAdherenceCount(summary['total_missed']);
+          final adherenceRate =
+              _parseAdherenceRate(summary['adherence_rate']);
+          final rating = summary['rating'];
+          final startDate = responseData?['start_date'];
+          final endDate = responseData?['end_date'];
+          final formattedStartDate = startDate == null
+              ? null
+              : _formatAdherenceDate(startDate);
+          final formattedEndDate =
+              endDate == null ? null : _formatAdherenceDate(endDate);
+
+          if (totalExpected != null &&
+              totalTaken != null &&
+              totalSkipped != null &&
+              totalMissed != null &&
+              adherenceRate != null &&
+              rating is String &&
+              rating.trim().isNotEmpty &&
+              (startDate == null || formattedStartDate != null) &&
+              (endDate == null || formattedEndDate != null)) {
+            loadedSummary = {
+              'total_expected': totalExpected,
+              'total_taken': totalTaken,
+              'total_skipped': totalSkipped,
+              'total_missed': totalMissed,
+              'adherence_rate': adherenceRate,
+              'rating': rating.trim(),
+            };
+            loadedStartDate = formattedStartDate;
+            loadedEndDate = formattedEndDate;
+          } else {
+            errorMessage = '無法載入服藥統計，請稍後再試';
+          }
+        } else if (backendMessage is String &&
+            backendMessage.trim().isNotEmpty) {
+          errorMessage = backendMessage.trim();
+        } else {
+          errorMessage = '無法載入服藥統計，請稍後再試';
+        }
+      }
+    } catch (e) {
+      debugPrint('載入服藥遵從率失敗: $e');
+      errorMessage = '無法載入服藥統計，請稍後再試';
+    }
+
+    if (!mounted || requestGeneration != _adherenceRequestGeneration) return;
+    setState(() {
+      _isAdherenceLoading = false;
+      _adherenceError = errorMessage;
+      if (loadedSummary != null) {
+        _adherenceSummary = loadedSummary;
+        _adherenceStartDate = loadedStartDate;
+        _adherenceEndDate = loadedEndDate;
+      }
+    });
   }
 
   Future<void> _fetchUserProfile() async {
@@ -2344,7 +4197,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('user_id');
       if (userId == null) {
-        setState(() => _isLoading = false);
+        if (mounted) setState(() => _isLoading = false);
         return;
       }
       final response = await http.post(
@@ -2355,15 +4208,16 @@ class _UserProfilePageState extends State<UserProfilePage> {
       final rawResponse = utf8.decode(response.bodyBytes);
       final data = json.decode(rawResponse);
       if (response.statusCode == 200 && data['status'] == 'success') {
+        if (!mounted) return;
         setState(() {
           _profileData = data['data'];
           _isLoading = false;
         });
       } else {
-        setState(() => _isLoading = false);
+        if (mounted) setState(() => _isLoading = false);
       }
     } catch (e) {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -2446,6 +4300,396 @@ class _UserProfilePageState extends State<UserProfilePage> {
     );
   }
 
+  Future<void> _showHealthBankConsentDialog() async {
+    if (_isHealthBankSyncing) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const _HealthBankConsentDialog(),
+    );
+
+    if (confirmed == true && mounted) {
+      await _onHealthBankConsentConfirmed();
+    }
+  }
+
+  int? _parseHealthBankSyncCount(dynamic value) {
+    if (value is int && value >= 0) return value;
+    if (value is String) {
+      final parsed = int.tryParse(value);
+      if (parsed != null && parsed >= 0) return parsed;
+    }
+    return null;
+  }
+
+  Future<void> _onHealthBankConsentConfirmed() async {
+    if (_isHealthBankSyncing || !mounted) return;
+
+    const fallbackError = '健康存摺資料匯入失敗，請稍後再試。';
+    String errorMessage = fallbackError;
+    String? successMessage;
+    int? syncedMedications;
+    int? syncedAllergies;
+
+    setState(() => _isHealthBankSyncing = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final storedUserId = prefs.get('user_id');
+      final userId = storedUserId is int
+          ? storedUserId
+          : int.tryParse(storedUserId?.toString() ?? '');
+
+      if (userId == null || userId <= 0) {
+        errorMessage = '登入資訊已失效，請重新登入。';
+      } else {
+        final response = await http
+            .post(
+              Uri.parse(
+                '$API_BASE_URL/medications/api/v1/health-bank/sync/',
+              ),
+              headers: {'Content-Type': 'application/json'},
+              body: json.encode({'user_id': userId}),
+            )
+            .timeout(const Duration(seconds: 15));
+
+        Map<String, dynamic>? responseData;
+        try {
+          final decoded = json.decode(utf8.decode(response.bodyBytes));
+          if (decoded is Map) {
+            responseData = Map<String, dynamic>.from(decoded);
+          }
+        } catch (e) {
+          debugPrint('Health Bank response parse failed: $e');
+        }
+
+        final backendMessage = responseData?['message'];
+        final hasBackendMessage =
+            backendMessage is String && backendMessage.trim().isNotEmpty;
+        final isDeclaredSuccess = response.statusCode == 200 &&
+            responseData?['status'] == 'success';
+
+        if (isDeclaredSuccess) {
+          final medicationCount =
+              _parseHealthBankSyncCount(responseData?['synced_medications']);
+          final allergyCount =
+              _parseHealthBankSyncCount(responseData?['synced_allergies']);
+
+          if (hasBackendMessage &&
+              medicationCount != null &&
+              allergyCount != null) {
+            successMessage = backendMessage;
+            syncedMedications = medicationCount;
+            syncedAllergies = allergyCount;
+          }
+        } else if (hasBackendMessage) {
+          errorMessage = backendMessage;
+        }
+      }
+    } catch (e) {
+      debugPrint('Health Bank sync failed: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isHealthBankSyncing = false);
+      }
+    }
+
+    if (!mounted) return;
+
+    if (successMessage != null &&
+        syncedMedications != null &&
+        syncedAllergies != null) {
+      unawaited(_fetchUserProfile());
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.teal, size: 30),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '健康存摺資料匯入完成',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            '$successMessage\n\n'
+            '已同步藥歷 $syncedMedications 筆\n'
+            '已同步過敏原 $syncedAllergies 筆',
+            style: const TextStyle(fontSize: 15, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                '完成',
+                style: TextStyle(
+                  color: Colors.teal,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  Widget _buildAdherenceMetric(String label, int value, Color color) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(
+            '$value 次',
+            style: TextStyle(
+              color: color,
+              fontSize: 17,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdherenceContent() {
+    if (_isAdherenceLoading) {
+      return const Card(
+        elevation: 1,
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 34),
+          child: Center(
+            child: CircularProgressIndicator(color: Colors.teal),
+          ),
+        ),
+      );
+    }
+
+    if (_adherenceError != null) {
+      return Card(
+        elevation: 1,
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            children: [
+              Icon(Icons.insights_outlined, color: Colors.grey.shade500),
+              const SizedBox(height: 10),
+              Text(
+                _adherenceError!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.black87),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () =>
+                    _fetchAdherenceStats(_selectedAdherenceDays),
+                icon: const Icon(Icons.refresh),
+                label: const Text('重新載入'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.teal,
+                  side: const BorderSide(color: Colors.teal),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final summary = _adherenceSummary;
+    if (summary == null) {
+      return const SizedBox.shrink();
+    }
+
+    final totalExpected = summary['total_expected'] as int;
+    if (totalExpected == 0) {
+      return Card(
+        elevation: 1,
+        color: const Color(0xFFF7F4FF),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 28),
+          child: Column(
+            children: [
+              const Icon(
+                Icons.event_note_outlined,
+                color: Colors.teal,
+                size: 38,
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                '此期間尚無服藥紀錄',
+                style: TextStyle(
+                  color: Colors.black87,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (_adherenceStartDate != null &&
+                  _adherenceEndDate != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '$_adherenceStartDate ～ $_adherenceEndDate',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    final adherenceRate = summary['adherence_rate'] as double;
+    final progress = (adherenceRate / 100).clamp(0.0, 1.0).toDouble();
+    final rating = summary['rating'] as String;
+
+    return Card(
+      elevation: 2,
+      color: const Color(0xFFF7F4FF),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          children: [
+            SizedBox(
+              width: 132,
+              height: 132,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  SizedBox.expand(
+                    child: CircularProgressIndicator(
+                      value: progress,
+                      strokeWidth: 11,
+                      backgroundColor: Colors.teal.shade100,
+                      color: Colors.teal,
+                    ),
+                  ),
+                  Text(
+                    '${adherenceRate.toStringAsFixed(1)}%',
+                    style: const TextStyle(
+                      color: Colors.teal,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '總服藥遵從率',
+              style: TextStyle(
+                color: Colors.black87,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Chip(
+              label: Text(
+                rating,
+                style: const TextStyle(
+                  color: Colors.teal,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              backgroundColor: Colors.teal.shade50,
+              side: BorderSide(color: Colors.teal.shade100),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                _buildAdherenceMetric('應吃', totalExpected, Colors.blueGrey),
+                _buildAdherenceMetric(
+                  '已吃',
+                  summary['total_taken'] as int,
+                  Colors.teal,
+                ),
+                _buildAdherenceMetric(
+                  '略過',
+                  summary['total_skipped'] as int,
+                  Colors.orange,
+                ),
+                _buildAdherenceMetric(
+                  '遺漏',
+                  summary['total_missed'] as int,
+                  Colors.redAccent,
+                ),
+              ],
+            ),
+            if (_adherenceStartDate != null &&
+                _adherenceEndDate != null) ...[
+              const SizedBox(height: 18),
+              Text(
+                '$_adherenceStartDate ～ $_adherenceEndDate',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdherenceSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        CupertinoSlidingSegmentedControl<int>(
+          groupValue: _selectedAdherenceDays,
+          backgroundColor: Colors.teal.shade50,
+          thumbColor: Colors.teal,
+          padding: const EdgeInsets.all(4),
+          children: {
+            for (final days in const [7, 14, 30])
+              days: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  '$days 天',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: _selectedAdherenceDays == days
+                        ? Colors.white
+                        : Colors.teal,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+          },
+          onValueChanged: (days) {
+            if (days == null || days == _selectedAdherenceDays) return;
+            _fetchAdherenceStats(days);
+          },
+        ),
+        const SizedBox(height: 12),
+        _buildAdherenceContent(),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) return const Center(child: CircularProgressIndicator(color: Colors.teal));
@@ -2457,9 +4701,12 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final weight = _profileData['weight']?.toString() ?? '未知';
     final emergencyPhone = _profileData['emergency_contact_phone'] ?? '未設定';
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
+    return Stack(
+      fit: StackFit.expand,
       children: [
+        ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
         Center(
           child: Column(
             children: [
@@ -2487,10 +4734,118 @@ class _UserProfilePageState extends State<UserProfilePage> {
           (allergies == '無' || allergies == '無過敏') ? Colors.green : Colors.redAccent
         ),
         _buildInfoCard(Icons.monitor_weight_outlined, '身體數值', '身高: ${height}cm / 體重: ${weight}kg', Colors.blue),
+
+        const SizedBox(height: 20),
+        _buildSectionTitle('服藥遵從率'),
+        _buildAdherenceSection(),
         
         const SizedBox(height: 20),
         _buildSectionTitle('緊急聯絡人'),
         _buildInfoCard(Icons.contact_phone, '緊急聯絡人 (家屬)', emergencyPhone, Colors.teal),
+
+        const SizedBox(height: 20),
+        _buildSectionTitle('健康存摺'),
+        Card(
+          elevation: 2,
+          margin: const EdgeInsets.only(bottom: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap:
+                _isHealthBankSyncing ? null : _showHealthBankConsentDialog,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: Colors.teal.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.cloud_download_outlined,
+                      color: Colors.teal,
+                      size: 26,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '匯入政府健康存摺資料',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Demo 資料匯入，開始前請閱讀使用聲明',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.chevron_right, color: Colors.teal),
+                ],
+              ),
+            ),
+          ),
+        ),
+            const SizedBox(height: 10),
+          ],
+        ),
+        if (_isHealthBankSyncing) ...[
+          const ModalBarrier(
+            dismissible: false,
+            color: Color(0x66000000),
+          ),
+          Center(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 32),
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black26,
+                    blurRadius: 12,
+                    offset: Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: Colors.teal),
+                  SizedBox(height: 16),
+                  Text(
+                    '正在匯入健康存摺資料…',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
