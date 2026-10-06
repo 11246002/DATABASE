@@ -72,7 +72,14 @@ class GroupMember(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     joined_at = models.DateTimeField(auto_now_add=True)
     group_role = models.CharField(max_length=20, default='member')
-    
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['group', 'user'],
+                name='unique_group_member'
+            )
+        ]
 
     def __str__(self):
         return f"{self.user} in {self.group}"
