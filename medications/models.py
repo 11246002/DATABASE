@@ -98,7 +98,8 @@ class Remind(models.Model):
     remind_time = models.TimeField()
 
     is_active = models.BooleanField(default=True)
-
+    is_deleted = models.BooleanField(default=False)
+    
     @property
     def start_date(self):
         """服藥起始日 (來自 Prescription.visit_date)"""
@@ -124,11 +125,13 @@ class Remind(models.Model):
         return False
 
     def delete(self, using=None, keep_parents=False, force=False):
-        """軟刪除：將 is_active 設為 False，避免外鍵 CASCADE 連帶清空 TakingRecord 歷史"""
+        """軟刪除：標記提醒為已刪除，並停用鬧鐘"""
         if force:
             return super().delete(using=using, keep_parents=keep_parents)
+
+        self.is_deleted = True
         self.is_active = False
-        self.save(update_fields=['is_active'])
+        self.save(update_fields=['is_deleted', 'is_active'])
 
     class Meta:
         constraints = [
