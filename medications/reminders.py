@@ -134,7 +134,8 @@ def set_medication_reminder(request):
                             frequency_tag=tag,
                             defaults={
                                 'remind_time': parsed_time,
-                                'is_active': bool(is_active_val)
+                                'is_active': bool(is_active_val),
+                                'is_deleted': False
                             }
                         )
                         if created:
@@ -142,10 +143,10 @@ def set_medication_reminder(request):
                         else:
                             updated_count += 1
 
-                    # 若該時段被前端移除，則將其標記為 is_active = False (軟刪除)，絕不破壞既有外鍵
+                    # 若該時段被前端移除，則將其標記為軟刪除 (is_deleted=True, is_active=False)，絕不破壞既有外鍵
                     Remind.objects.filter(prescription_drug=p_drug).exclude(
                         frequency_tag__in=active_tags
-                    ).update(is_active=False)
+                    ).update(is_active=False, is_deleted=True)
             
             return JsonResponse({
                 'status': 'success',
@@ -273,7 +274,8 @@ def get_today_reminders(request, user_id=None):
 
         # 3. 高效查詢該使用者的所有鬧鐘與關聯資料 (JOIN prescription_drug, prescription, drug)
         reminds = Remind.objects.filter(
-            prescription_drug__prescription__user_id=uid
+            prescription_drug__prescription__user_id=uid,
+            is_deleted=False
         ).select_related(
             'prescription_drug',
             'prescription_drug__prescription',
@@ -385,13 +387,12 @@ def delete_single_reminder(request, remind_id):
         tag = remind.frequency_tag
         remind_time = remind.remind_time.strftime('%H:%M:%S') if remind.remind_time else ""
         
-        # 軟刪除：標記 is_active = False，絕不破壞既有外鍵與歷史打卡紀錄 (TakingRecord)
-        remind.is_active = False
-        remind.save(update_fields=['is_active'])
+        # 軟刪除：呼叫自訂 delete()，將 is_deleted 設為 True、is_active 設為 False，保留外鍵與打卡紀錄
+        remind.delete()
         return JsonResponse({
             'status': 'success',
             'message': f'已成功刪除鬧鐘：{drug_name} ({tag} {remind_time})',
-            'data': {'remind_id': remind_id, 'is_active': False}
+            'data': {'remind_id': remind_id, 'is_active': False, 'is_deleted': True}
         }, status=200)
     except Exception as e:
         return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
