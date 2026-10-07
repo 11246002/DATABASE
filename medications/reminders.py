@@ -192,7 +192,8 @@ def get_reminders_list(request):
 
             # 1 次 SQL 查詢：直接反向關聯撈取 Remind 並 JOIN prescription_drug 與 prescription
             reminds = Remind.objects.filter(
-                prescription_drug__prescription=prescription
+                prescription_drug__prescription=prescription,
+                is_deleted=False
             ).select_related('prescription_drug', 'prescription_drug__prescription').order_by('remind_time')
 
             reminders_data = []
