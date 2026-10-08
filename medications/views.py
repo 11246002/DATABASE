@@ -235,13 +235,13 @@ def get_requester_id_from_request(request):
 def check_user_access_permission(requester_id, target_user_id):
     """
     校驗 requester 是否有權限查看 target_user 的藥單資料：
-    1. 未帶 requester_id -> True (向後相容舊版前端查看自身藥單)
+    1. 未帶 requester_id 或 target_user_id -> False (未認證或無效對象不予放行)
     2. 本人 (requester_id == target_user_id) -> True
     3. 同群組成員 (雙方同屬至少一個群組) -> True
-    4. 其他 -> False
+    4. 其他非同群組成員 -> False
     """
-    if not requester_id:
-        return True
+    if not requester_id or not target_user_id:
+        return False
     try:
         r_id = int(requester_id)
         t_id = int(target_user_id)
@@ -264,12 +264,18 @@ def check_user_access_permission(requester_id, target_user_id):
 def get_user_prescriptions_api(request, user_id):
     if request.method == 'GET':
         try:
-            # 🌟 身份與群組權限校驗 (若帶有發送者身分則嚴格校驗防越權；未帶則向後相容預設放行)
+            # 🌟 身份與群組權限校驗 (未帶 requester 身分直接 401；非本人且非同群組回傳 403)
             requester_id = get_requester_id_from_request(request)
-            if requester_id and not check_user_access_permission(requester_id, user_id):
+            if not requester_id:
                 return JsonResponse({
                     'status': 'error',
-                    'message': '權限不足：您只能查看自己或同群組成員的藥單列表'
+                    'message': '未認證或缺少身分資訊 (401 Unauthorized)：請於 Request Header 帶上 Authorization 或 X-User-Id'
+                }, status=401)
+
+            if not check_user_access_permission(requester_id, user_id):
+                return JsonResponse({
+                    'status': 'error',
+                    'message': '權限不足 (403 Forbidden)：您只能查看自己或同群組成員的藥單列表'
                 }, status=403)
 
             # 撈出該使用者的所有藥單，依日期由新到舊排序
@@ -302,12 +308,18 @@ def get_prescription_detail_api(request, prescription_id):
             if not prescription:
                 return JsonResponse({'status': 'error', 'message': '找不到該藥單'}, status=404)
 
-            # 🌟 身份與群組權限校驗 (若帶有發送者身分則嚴格校驗防越權；未帶則向後相容預設放行)
+            # 🌟 身份與群組權限校驗 (未帶 requester 身分直接 401；非本人且非同群組回傳 403)
             requester_id = get_requester_id_from_request(request)
-            if requester_id and not check_user_access_permission(requester_id, prescription.user_id):
+            if not requester_id:
                 return JsonResponse({
                     'status': 'error',
-                    'message': '權限不足：您只能查看自己或同群組成員的藥單詳情'
+                    'message': '未認證或缺少身分資訊 (401 Unauthorized)：請於 Request Header 帶上 Authorization 或 X-User-Id'
+                }, status=401)
+
+            if not check_user_access_permission(requester_id, prescription.user_id):
+                return JsonResponse({
+                    'status': 'error',
+                    'message': '權限不足 (403 Forbidden)：您只能查看自己或同群組成員的藥單詳情'
                 }, status=403)
 
             # 找出這張藥單的所有藥品明細
