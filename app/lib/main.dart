@@ -944,18 +944,16 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
   Future<void> _fetchPrescriptions() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
-      final currentLoggedInUserId = prefs.getInt('user_id');
-      if (currentLoggedInUserId == null || currentLoggedInUserId <= 0) {
+      int? userId = prefs.getInt('user_id');
+      if (userId == null || userId <= 0) {
         setState(() => _isLoading = false);
         return;
       }
       final response = await http.get(
-        Uri.parse(
-          '$API_BASE_URL/medications/api/prescriptions/$currentLoggedInUserId/',
-        ),
+        Uri.parse('$API_BASE_URL/medications/api/prescriptions/$userId/'),
         headers: {
           'Accept': 'application/json',
-          'X-User-Id': currentLoggedInUserId.toString(),
+          'X-User-Id': userId.toString(),
         },
       );
       final data = json.decode(utf8.decode(response.bodyBytes));
@@ -1503,8 +1501,8 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      final currentLoggedInUserId = prefs.getInt('user_id');
-      if (currentLoggedInUserId == null || currentLoggedInUserId <= 0) {
+      final currentUserId = prefs.getInt('user_id');
+      if (currentUserId == null || currentUserId <= 0) {
         _prescriptionDetailError = '登入資訊已失效，請重新登入';
         return;
       }
@@ -1516,7 +1514,7 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
             ),
             headers: {
               'Accept': 'application/json',
-              'X-User-Id': currentLoggedInUserId.toString(),
+              'X-User-Id': currentUserId.toString(),
             },
           )
           .timeout(const Duration(seconds: 15));
@@ -2278,18 +2276,18 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
 
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
-      final currentLoggedInUserId = prefs.getInt('user_id');
-      if (currentLoggedInUserId == null || currentLoggedInUserId <= 0) {
+      int? userId = prefs.getInt('user_id');
+      if (userId == null || userId <= 0) {
         loadFailed = true;
       } else {
         final response = await http
             .get(
               Uri.parse(
-                '$API_BASE_URL/medications/api/prescriptions/$currentLoggedInUserId/',
+                '$API_BASE_URL/medications/api/prescriptions/$userId/',
               ),
               headers: {
                 'Accept': 'application/json',
-                'X-User-Id': currentLoggedInUserId.toString(),
+                'X-User-Id': userId.toString(),
               },
             )
             .timeout(const Duration(seconds: 15));
@@ -3027,8 +3025,8 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      final currentLoggedInUserId = prefs.getInt('user_id');
-      if (currentLoggedInUserId == null || currentLoggedInUserId <= 0) {
+      final currentUserId = prefs.getInt('user_id');
+      if (currentUserId == null || currentUserId <= 0) {
         loadError = '登入資訊已失效，請重新登入';
       } else {
         final response = await http
@@ -3038,7 +3036,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
               ),
               headers: {
                 'Accept': 'application/json',
-                'X-User-Id': currentLoggedInUserId.toString(),
+                'X-User-Id': currentUserId.toString(),
               },
             )
             .timeout(const Duration(seconds: 15));
@@ -5257,8 +5255,8 @@ class _GroupMemberPrescriptionsPageState
     String errorMessage = '無法載入此成員的藥單';
     try {
       final prefs = await SharedPreferences.getInstance();
-      final currentLoggedInUserId = prefs.getInt('user_id');
-      if (currentLoggedInUserId == null || currentLoggedInUserId <= 0) {
+      final currentUserId = prefs.getInt('user_id');
+      if (currentUserId == null || currentUserId <= 0) {
         errorMessage = '登入資訊已失效，請重新登入';
         throw const FormatException('missing current user id');
       }
@@ -5269,7 +5267,7 @@ class _GroupMemberPrescriptionsPageState
             ),
             headers: {
               'Accept': 'application/json',
-              'X-User-Id': currentLoggedInUserId.toString(),
+              'X-User-Id': currentUserId.toString(),
             },
           )
           .timeout(const Duration(seconds: 15));
