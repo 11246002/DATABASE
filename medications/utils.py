@@ -243,7 +243,32 @@ def check_medication_time_overlap(pd1, pd2, buffer_days=7):
         return True, "時程計算異常，安全起見列入警示"
 
 
-# 用藥安全檢查小工具：負責交叉比對過敏與藥物衝突（整合健康存摺資料）。
+def extract_core_elements(element_str):
+    if not element_str or str(element_str).lower() == 'nan':
+        return set()
+    raw_parts = [p.strip().upper() for p in element_str.split(';;') if p.strip()]
+    cleaned = set()
+    for p in raw_parts:
+        base = re.sub(r'\(.*?\)', '', p).strip()
+        tokens = [t for t in base.split() if t not in ['HCL', 'SODIUM', 'POTASSIUM', 'MALEATE', 'HBR', 'HYDROCHLORIDE', 'OXALATE', 'MONOHYDRATE', 'HEMIHYDRATE', 'ACETATE', 'SULFATE', 'TARTRATE', 'PHOSPHATE', 'DIPHOSPHATE']]
+        if tokens:
+            cleaned.add(' '.join(tokens))
+        elif base:
+            cleaned.add(base)
+    return cleaned
+
+DRUG_CLASS_MAP = {
+    'nsaid': {'celecoxib', 'diclofenac', 'ibuprofen', 'naproxen', 'ketorolac', 'mefenamic', 'meloxicam', 'etodolac', 'aspirin', 'indomethacin', 'sulindac', 'ketoprofen'},
+    '非類固醇': {'celecoxib', 'diclofenac', 'ibuprofen', 'naproxen', 'ketorolac', 'mefenamic', 'meloxicam', 'etodolac', 'aspirin', 'indomethacin', 'sulindac', 'ketoprofen'},
+    'arb': {'candesartan', 'losartan', 'valsartan', 'irbesartan', 'olmesartan', 'telmisartan'},
+    'ace': {'captopril', 'enalapril', 'lisinopril', 'ramipril'},
+    '降血壓': {'candesartan', 'losartan', 'valsartan', 'irbesartan', 'olmesartan', 'telmisartan', 'amlodipine', 'nifedipine'},
+    '抗凝血': {'warfarin', 'rivaroxaban', 'apixaban', 'dabigatran', 'edoxaban', 'heparin', 'clopidogrel'},
+    'warfarin': {'warfarin'},
+}
+
+
+# 用藥安全檢查小工具：負責交叉比對過敏、重複用藥與藥物衝突（整合健康存摺資料）。
 def check_user_medication_safety(user_id):
     try:
         user_obj = User.objects.filter(user_id=user_id).first()
@@ -313,15 +338,55 @@ def check_user_medication_safety(user_id):
                             'conflicting_drug_ids': []
                         })
 
+            # ==========================================
+            # [B-1] 檢查跨處方重複用藥 (相同成分/相同藥物重複開立)
+            # ==========================================
+            pd_elems = extract_core_elements(pd.drug.element if pd.drug else '')
+            for other_pd in all_user_drugs:
+                if other_pd.id == pd.id:
+                    continue
+
+                is_overlapping, time_desc = check_medication_time_overlap(pd, other_pd)
+                if not is_overlapping:
+                    continue
+
+                other_elems = extract_core_elements(other_pd.drug.element if other_pd.drug else '')
+                shared_elems = pd_elems.intersection(other_elems) if (pd_elems and other_elems) else set()
+                is_same_db_drug = (pd.drug_id and other_pd.drug_id and pd.drug_id == other_pd.drug_id)
+
+                if is_same_db_drug or shared_elems:
+                    dup_name = ", ".join(shared_elems) if shared_elems else (pd.drug.med_ch if pd.drug else pd.raw_name)
+                    other_hosp = other_pd.prescription.hospital_name if other_pd.prescription and other_pd.prescription.hospital_name else "其他院所"
+                    other_display = f"{other_pd.raw_name}（{other_hosp}）"
+                    
+                    already_warned = any(
+                        other_pd.id in w.get('conflicting_drug_ids', []) and '重複用藥' in w.get('conflict_target', '')
+                        for w in drug_results_map[pd.id]['warnings']
+                    )
+                    if not already_warned:
+                        drug_results_map[pd.id]['is_severe_danger'] = True
+                        drug_results_map[pd.id]['warnings'].append({
+                            'conflict_target': f"重複用藥：{dup_name}",
+                            'warning_desc': f"與【{other_hosp}】開立之【{other_pd.raw_name}】含有相同成分（{dup_name}）。重複併用恐致藥物過量蓄積與急性中毒！({time_desc})",
+                            'is_allergy_conflict': False,
+                            'is_drug_conflict': True,
+                            'conflicting_drug_names': [other_display],
+                            'conflicting_drug_ids': [other_pd.id]
+                        })
+
             if not pd.drug:
                 continue
 
             # ==========================================
-            # [B] 檢查藥品衝突（當前藥物 vs 當前其他藥物）
+            # [B-2] 檢查藥品衝突與交互作用（當前藥物 vs 當前其他藥物）
             # ==========================================
             warnings = DrugWarning.objects.filter(drug=pd.drug)
             for w in warnings:
                 target = w.conflict_target.lower()
+                target_expanded_keywords = set()
+                for class_k, class_members in DRUG_CLASS_MAP.items():
+                    if class_k in target:
+                        target_expanded_keywords.update(class_members)
                 
                 hit_other_drug = False
                 conflicting_pd_list = []
@@ -336,7 +401,10 @@ def check_user_medication_safety(user_id):
                     if other_pd.drug and other_pd.drug.med_en: other_names.append(other_pd.drug.med_en.lower())
                     if other_pd.drug and getattr(other_pd.drug, 'element', None): other_names.append(other_pd.drug.element.lower())
 
-                    if any(name in target or target in name for name in other_names if name):
+                    name_matched = any(name in target or target in name for name in other_names if name)
+                    class_matched = any(any(kw in name for name in other_names if name) for kw in target_expanded_keywords)
+
+                    if name_matched or class_matched:
                         # 🌟 時序重疊與代謝清除期檢核
                         is_overlapping, time_desc = check_medication_time_overlap(pd, other_pd)
                         if is_overlapping:
@@ -352,7 +420,10 @@ def check_user_medication_safety(user_id):
                         'warning_desc': f"{w.warning_desc}（併用時程重疊）",
                         'is_allergy_conflict': False,
                         'is_drug_conflict': True,
-                        'conflicting_drug_names': [cpd.raw_name for cpd, _ in conflicting_pd_list],
+                        'conflicting_drug_names': [
+                            f"{cpd.raw_name}（{cpd.prescription.hospital_name}）" if cpd.prescription and cpd.prescription.hospital_name else cpd.raw_name 
+                            for cpd, _ in conflicting_pd_list
+                        ],
                         'conflicting_drug_ids': [cpd.id for cpd, _ in conflicting_pd_list]
                     })
                     for cpd, time_desc in conflicting_pd_list:
@@ -362,17 +433,21 @@ def check_user_medication_safety(user_id):
                             for existing_w in drug_results_map[cpd.id]['warnings']
                         )
                         if not already_has_warning:
+                            pd_hosp = pd.prescription.hospital_name if pd.prescription and pd.prescription.hospital_name else "其他院所"
                             drug_results_map[cpd.id]['warnings'].append({
                                 'conflict_target': f"反向衝突：{pd.raw_name}",
-                                'warning_desc': f"此藥物與您正在服用的 {pd.raw_name} 產生交互作用，請參考該藥物的警告說明。({time_desc})",
+                                'warning_desc': f"此藥物與您正在服用的【{pd_hosp}】開立之【{pd.raw_name}】產生交互作用：{w.warning_desc}（{time_desc}）",
                                 'is_allergy_conflict': False,
                                 'is_drug_conflict': True,
-                                'conflicting_drug_names': [pd.raw_name],
+                                'conflicting_drug_names': [f"{pd.raw_name}（{pd_hosp}）"],
                                 'conflicting_drug_ids': [pd.id]
                             })
                 elif historical_note_list:
                     # 曾有開立紀錄但服藥時段未重疊（已過代謝期），僅列為衛教提示，不標記為 is_severe_danger
-                    h_names = [hpd.raw_name for hpd, _ in historical_note_list]
+                    h_names = [
+                        f"{hpd.raw_name}（{hpd.prescription.hospital_name}）" if hpd.prescription and hpd.prescription.hospital_name else hpd.raw_name 
+                        for hpd, _ in historical_note_list
+                    ]
                     drug_results_map[pd.id]['warnings'].append({
                         'conflict_target': f"歷史用藥提示：{w.conflict_target}",
                         'warning_desc': f"{w.warning_desc}（備註：系統檢測過去曾開立過相關藥物 {', '.join(h_names)}，但因服藥時程相隔久遠已過代謝期，若已停藥則無併用風險）。",
@@ -397,7 +472,9 @@ def check_user_medication_safety(user_id):
                 conflicting_bank_meds = []
                 for bmed in bank_history_meds:
                     b_names = [bmed.drug_name.lower()]
-                    if any(bname in target or target in bname for bname in b_names if bname):
+                    b_matched = any(bname in target or target in bname for bname in b_names if bname)
+                    b_class_matched = any(any(kw in bname for bname in b_names if bname) for kw in target_expanded_keywords)
+                    if b_matched or b_class_matched:
                         # 檢查健康存摺處方日 (rx_date) 與目前藥單是否具備時程重疊
                         b_overlap = True
                         if bmed.rx_date and pd.prescription and pd.prescription.visit_date:
@@ -421,7 +498,7 @@ def check_user_medication_safety(user_id):
                             'is_allergy_conflict': False,
                             'is_drug_conflict': True,
                             'source': '健保署健康存摺藥歷',
-                            'conflicting_drug_names': [cb.drug_name],
+                            'conflicting_drug_names': [f"{cb.drug_name}（健保存摺：{cb.hosp_name}）"],
                             'conflicting_drug_ids': [cb.history_id]
                         })
 

@@ -22,4 +22,12 @@ urlpatterns = [
 
     # 取得成員列表
     path('api/group/members/', views.get_group_members_api, name='get_group_members'),
+
+    # 取得使用者所屬群組列表 (支援 POST Body 或 URL / Query user_id)
+    path('api/user/groups/', views.get_user_groups_api, name='get_user_groups'),
+    path('api/user/<int:user_id>/groups/', views.get_user_groups_api, name='get_user_groups_by_id'),
+
+    # 群組邀請碼查詢與重整 (限 Owner)
+    path('api/group/invite_code/', views.manage_invite_code_api, name='manage_invite_code'),
+    path('api/group/<int:group_id>/invite_code/', views.manage_invite_code_api, name='manage_invite_code_by_id'),
 ]

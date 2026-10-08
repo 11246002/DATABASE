@@ -204,12 +204,74 @@ def confirm_and_save_prescription_api(request):
 
 
 # ==========================================
+# 權限驗證小工具：檢查發送請求者是否為本人或同群組成員
+# ==========================================
+def get_requester_id_from_request(request):
+    """
+    從 Request Header (Authorization、X-User-Id) 或 Query Param 取得當前發送請求的使用者 ID
+    """
+    auth_header = request.headers.get('Authorization') or request.META.get('HTTP_AUTHORIZATION')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split('Bearer ')[-1].strip()
+        if token.startswith('session_token_'):
+            try:
+                return int(token.replace('session_token_', ''))
+            except ValueError:
+                pass
+        elif token.isdigit():
+            return int(token)
+            
+    x_uid = request.headers.get('X-User-Id') or request.META.get('HTTP_X_USER_ID')
+    if x_uid and str(x_uid).isdigit():
+        return int(x_uid)
+        
+    req_uid = request.GET.get('requester_id') or request.GET.get('user_id')
+    if req_uid and str(req_uid).isdigit():
+        return int(req_uid)
+        
+    return None
+
+
+def check_user_access_permission(requester_id, target_user_id):
+    """
+    校驗 requester 是否有權限查看 target_user 的藥單資料：
+    1. 未帶 requester_id -> True (向後相容舊版前端查看自身藥單)
+    2. 本人 (requester_id == target_user_id) -> True
+    3. 同群組成員 (雙方同屬至少一個群組) -> True
+    4. 其他 -> False
+    """
+    if not requester_id:
+        return True
+    try:
+        r_id = int(requester_id)
+        t_id = int(target_user_id)
+        if r_id == t_id:
+            return True
+        
+        from accounts.models import GroupMember
+        r_groups = set(GroupMember.objects.filter(user_id=r_id).values_list('group_id', flat=True))
+        if not r_groups:
+            return False
+        return GroupMember.objects.filter(user_id=t_id, group_id__in=r_groups).exists()
+    except Exception:
+        return False
+
+
+# ==========================================
 # 藥單列表
 # ==========================================
 @csrf_exempt
 def get_user_prescriptions_api(request, user_id):
     if request.method == 'GET':
         try:
+            # 🌟 身份與群組權限校驗 (若帶有發送者身分則嚴格校驗防越權；未帶則向後相容預設放行)
+            requester_id = get_requester_id_from_request(request)
+            if requester_id and not check_user_access_permission(requester_id, user_id):
+                return JsonResponse({
+                    'status': 'error',
+                    'message': '權限不足：您只能查看自己或同群組成員的藥單列表'
+                }, status=403)
+
             # 撈出該使用者的所有藥單，依日期由新到舊排序
             prescriptions = Prescription.objects.filter(user_id=user_id).order_by('-visit_date')
             
@@ -235,22 +297,53 @@ def get_user_prescriptions_api(request, user_id):
 def get_prescription_detail_api(request, prescription_id):
     if request.method == 'GET':
         try:
+            # 取得處方主檔
+            prescription = Prescription.objects.filter(prescription_id=prescription_id).first()
+            if not prescription:
+                return JsonResponse({'status': 'error', 'message': '找不到該藥單'}, status=404)
+
+            # 🌟 身份與群組權限校驗 (若帶有發送者身分則嚴格校驗防越權；未帶則向後相容預設放行)
+            requester_id = get_requester_id_from_request(request)
+            if requester_id and not check_user_access_permission(requester_id, prescription.user_id):
+                return JsonResponse({
+                    'status': 'error',
+                    'message': '權限不足：您只能查看自己或同群組成員的藥單詳情'
+                }, status=403)
+
             # 找出這張藥單的所有藥品明細
-            drugs_in_p = PrescriptionDrug.objects.filter(prescription_id=prescription_id)
+            drugs_in_p = PrescriptionDrug.objects.filter(prescription=prescription)
             
+            # 🌟 呼叫全域用藥安全檢查，取得跨處方衝突與過敏標記
+            safety_map = {}
+            try:
+                is_ok, safety_results = check_user_medication_safety(prescription.user_id)
+                if is_ok and isinstance(safety_results, list):
+                    for s_item in safety_results:
+                        safety_map[s_item.get('prescription_drug_id')] = s_item
+            except Exception as se:
+                print(f"安全檢查快取失敗: {se}")
+
             detailed_data = []
             for item in drugs_in_p:
-                # 處理警告紀錄 (加上檢查，避免 item.drug 是空的)
-                warning_list = []
-                if item.drug:
-                    warnings = DrugWarning.objects.filter(drug=item.drug)
-                    for w in warnings:
-                        warning_list.append({
-                            "conflict_target": w.conflict_target,
-                            "warning_desc": w.warning_desc
-                        })
+                safety_info = safety_map.get(item.id)
+                if safety_info:
+                    warning_list = safety_info.get('warnings', [])
+                    is_severe = safety_info.get('is_severe_danger', False)
+                else:
+                    warning_list = []
+                    is_severe = False
+                    if item.drug:
+                        warnings = DrugWarning.objects.filter(drug=item.drug)
+                        for w in warnings:
+                            warning_list.append({
+                                "conflict_target": w.conflict_target,
+                                "warning_desc": w.warning_desc,
+                                "is_drug_conflict": False,
+                                "is_allergy_conflict": False,
+                                "conflicting_drug_names": []
+                            })
                 
-                #  組合藥品資訊 (加上 id，並處理藥品可能為空的狀況)
+                # 組合藥品資訊 (加上 is_severe_danger 與豐富的警告屬性)
                 detailed_data.append({
                     "id": item.id, 
                     "raw_name": item.raw_name,
@@ -259,7 +352,9 @@ def get_prescription_detail_api(request, prescription_id):
                     "frequency": item.frequency,
                     "total_amount": item.total_amount,
                     "days": item.days,
+                    "remaining_amount": item.remaining_amount,
                     "indications": item.drug.indications if item.drug else "請諮詢醫師或藥師了解用途",
+                    "is_severe_danger": is_severe,
                     "warnings": warning_list
                 })
                 
