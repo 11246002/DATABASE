@@ -15,7 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // 🌟 2. 新增的變數：因為你用網頁版測試，所以直接用 127.0.0.1 即可！
 // 網頁開發建議改為 127.0.0.1 或 localhost，避免跨網域問題
-const String API_BASE_URL = 'http://192.168.0.12:8000';
+const String API_BASE_URL = 'http://127.0.0.1:8000';
 
 late List<CameraDescription> cameras;
 
@@ -3497,16 +3497,23 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
       final backendMessage = responseData?['message'];
       final isTransportSuccess =
           response.statusCode >= 200 && response.statusCode < 300;
-      if (isTransportSuccess && responseData?['status'] == 'success') {
-        _showReminderMessage(
-          backendMessage is String && backendMessage.trim().isNotEmpty
-              ? backendMessage.trim()
-              : '提醒設定已儲存。',
-        );
-        if (mounted && _selectedPrescriptionId == prescriptionId) {
-          await _fetchRemindersForPrescription(prescriptionId);
-        }
-      } else {
+if (isTransportSuccess && responseData?['status'] == 'success') {
+  _showReminderMessage(
+    backendMessage is String && backendMessage.trim().isNotEmpty
+        ? backendMessage.trim()
+        : '提醒設定已儲存。',
+  );
+
+  // 重新整理今日服藥日程
+  await _fetchTodayReminders();
+
+  if (!mounted) return;
+
+  // 重新整理目前藥單的提醒設定
+  if (_selectedPrescriptionId == prescriptionId) {
+    await _fetchRemindersForPrescription(prescriptionId);
+  }
+} else {
         _showReminderMessage(
           backendMessage is String && backendMessage.trim().isNotEmpty
               ? backendMessage.trim()
@@ -3889,47 +3896,88 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
                 ),
               ),
               const SizedBox(height: 14),
-              CupertinoSlidingSegmentedControl<int>(
-                groupValue: _reminderViewIndex,
-                backgroundColor: Colors.teal.shade50,
-                thumbColor: Colors.teal,
-                padding: const EdgeInsets.all(4),
-                children: {
-                  0: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 9,
-                    ),
-                    child: Text(
-                      '今日服藥日程',
-                      style: TextStyle(
-                        color: _reminderViewIndex == 0
-                            ? Colors.white
-                            : Colors.teal,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Container(
+                  height: 58,
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.shade50,
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  1: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 9,
-                    ),
-                    child: Text(
-                      '藥單鬧鐘設定',
-                      style: TextStyle(
-                        color: _reminderViewIndex == 1
-                            ? Colors.white
-                            : Colors.teal,
-                        fontWeight: FontWeight.bold,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: () {
+                              if (_reminderViewIndex != 0) {
+                                setState(() => _reminderViewIndex = 0);
+                              }
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: _reminderViewIndex == 0
+                                    ? Colors.teal
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                '今日服藥日程',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: _reminderViewIndex == 0
+                                      ? Colors.white
+                                      : Colors.teal,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
+                      Expanded(
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: () {
+                              if (_reminderViewIndex != 1) {
+                                setState(() => _reminderViewIndex = 1);
+                              }
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: _reminderViewIndex == 1
+                                    ? Colors.teal
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                '藥單鬧鐘設定',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: _reminderViewIndex == 1
+                                      ? Colors.white
+                                      : Colors.teal,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                },
-                onValueChanged: (value) {
-                  if (value == null) return;
-                  setState(() => _reminderViewIndex = value);
-                },
+                ),
               ),
               const SizedBox(height: 16),
               Expanded(
