@@ -300,8 +300,8 @@ def get_group_members_api(request):
                 return JsonResponse({'status': 'error', 'message': '找不到該群組'}, status=404)
 
             # 2. 資安防護：檢查發送請求的人，是不是這個群組的成員
-            is_member = GroupMember.objects.filter(group=group, user_id=user_id).exists()
-            if not is_member:
+            requester_member = GroupMember.objects.filter(group=group, user_id=user_id).first()
+            if not requester_member:
                 return JsonResponse({'status': 'error', 'message': '您不是此群組的成員，無權查看'}, status=403)
 
             # 3. 撈出群組內所有成員
@@ -321,12 +321,14 @@ def get_group_members_api(request):
                     'joined_at': m.joined_at.strftime('%Y-%m-%d %H:%M') if m.joined_at else ''
                 })
 
+            is_owner = (requester_member.group_role == 'owner')
             return JsonResponse({
                 'status': 'success',
                 'message': '群組成員列表讀取成功',
                 'data': {
                     'group_id': group.group_id,
                     'group_name': group.group_name,
+                    'invite_code': group.invite_code if is_owner else None,
                     'members': member_list
                 }
             }, status=200)
@@ -337,3 +339,115 @@ def get_group_members_api(request):
             return JsonResponse({'status': 'error', 'message': f"系統錯誤: {str(e)}"}, status=500)
 
     return JsonResponse({'status': 'error', 'message': '僅支援 POST 請求'}, status=405)
+
+
+# ==========================================
+# 取得目前使用者所屬群組列表 API
+# ==========================================
+@csrf_exempt
+def get_user_groups_api(request, user_id=None):
+    if request.method not in ['GET', 'POST']:
+        return JsonResponse({'status': 'error', 'message': '僅支援 GET 或 POST 請求'}, status=405)
+
+    try:
+        data = {}
+        if request.method == 'POST' and request.body:
+            try:
+                data = json.loads(request.body)
+            except Exception:
+                pass
+
+        uid = user_id or data.get('user_id') or request.GET.get('user_id')
+        if not uid:
+            auth_header = request.headers.get('Authorization') or request.META.get('HTTP_AUTHORIZATION')
+            if auth_header and 'session_token_' in auth_header:
+                token = auth_header.split('Bearer ')[-1].strip()
+                uid = token.replace('session_token_', '')
+            elif request.headers.get('X-User-Id'):
+                uid = request.headers.get('X-User-Id')
+
+        if not uid:
+            return JsonResponse({'status': 'error', 'message': '缺少 user_id 參數'}, status=400)
+
+        user = User.objects.filter(user_id=uid).first()
+        if not user:
+            return JsonResponse({'status': 'error', 'message': '找不到該使用者'}, status=404)
+
+        group_memberships = GroupMember.objects.filter(user=user).select_related('group').order_by('-joined_at')
+
+        group_list = []
+        for gm in group_memberships:
+            g = gm.group
+            is_owner = (gm.group_role == 'owner')
+            group_list.append({
+                'group_id': g.group_id,
+                'group_name': g.group_name,
+                'group_role': gm.group_role,
+                'invite_code': g.invite_code if is_owner else None,
+                'joined_at': gm.joined_at.strftime('%Y-%m-%d %H:%M') if gm.joined_at else ''
+            })
+
+        return JsonResponse({
+            'status': 'success',
+            'message': '取得使用者所屬群組成功',
+            'data': group_list
+        }, status=200)
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': f"系統錯誤: {str(e)}"}, status=500)
+
+
+# ==========================================
+# 群組邀請碼查詢與重新產生 API (限 Owner)
+# ==========================================
+@csrf_exempt
+def manage_invite_code_api(request, group_id=None):
+    if request.method not in ['GET', 'POST']:
+        return JsonResponse({'status': 'error', 'message': '僅支援 GET 或 POST 請求'}, status=405)
+
+    try:
+        data = {}
+        if request.body:
+            try:
+                data = json.loads(request.body)
+            except Exception:
+                pass
+
+        gid = group_id or data.get('group_id') or request.GET.get('group_id')
+        uid = data.get('user_id') or request.GET.get('user_id')
+        if not uid:
+            auth_header = request.headers.get('Authorization') or request.META.get('HTTP_AUTHORIZATION')
+            if auth_header and 'session_token_' in auth_header:
+                token = auth_header.split('Bearer ')[-1].strip()
+                uid = token.replace('session_token_', '')
+            elif request.headers.get('X-User-Id'):
+                uid = request.headers.get('X-User-Id')
+
+        if not gid or not uid:
+            return JsonResponse({'status': 'error', 'message': '缺少 group_id 或 user_id'}, status=400)
+
+        group = Group.objects.filter(group_id=gid).first()
+        if not group:
+            return JsonResponse({'status': 'error', 'message': '找不到該群組'}, status=404)
+
+        membership = GroupMember.objects.filter(group=group, user_id=uid).first()
+        if not membership:
+            return JsonResponse({'status': 'error', 'message': '您不是此群組成員'}, status=403)
+        if membership.group_role != 'owner':
+            return JsonResponse({'status': 'error', 'message': '權限不足：只有群組建立者 (owner) 才能查看或重設邀請碼'}, status=403)
+
+        regenerate = str(data.get('regenerate', request.GET.get('regenerate', 'false'))).lower() in ['true', '1']
+        if regenerate:
+            group.invite_code = generate_invite_code()
+            group.save(update_fields=['invite_code'])
+
+        return JsonResponse({
+            'status': 'success',
+            'message': '邀請碼重新產生成功' if regenerate else '邀請碼取得成功',
+            'data': {
+                'group_id': group.group_id,
+                'group_name': group.group_name,
+                'invite_code': group.invite_code
+            }
+        }, status=200)
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': f"系統錯誤: {str(e)}"}, status=500)
