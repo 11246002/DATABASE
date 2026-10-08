@@ -945,11 +945,17 @@ class _MyMedicationBagPageState extends State<MyMedicationBagPage> {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('user_id');
-      if (userId == null) {
+      if (userId == null || userId <= 0) {
         setState(() => _isLoading = false);
         return;
       }
-      final response = await http.get(Uri.parse('$API_BASE_URL/medications/api/prescriptions/$userId/'));
+      final response = await http.get(
+        Uri.parse('$API_BASE_URL/medications/api/prescriptions/$userId/'),
+        headers: {
+          'Accept': 'application/json',
+          'X-User-Id': userId.toString(),
+        },
+      );
       final data = json.decode(utf8.decode(response.bodyBytes));
       if (response.statusCode == 200 && data['status'] == 'success') {
         setState(() => _prescriptions = List<Map<String, dynamic>>.from(data['data']));
@@ -1494,34 +1500,57 @@ class _PrescriptionDetailPageState extends State<PrescriptionDetailPage> {
     }
 
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final currentUserId = prefs.getInt('user_id');
+      if (currentUserId == null || currentUserId <= 0) {
+        _prescriptionDetailError = '登入資訊已失效，請重新登入';
+        return;
+      }
       debugPrint('👉 準備獲取藥單明細，ID: $pid');
       final response = await http
           .get(
             Uri.parse(
               '$API_BASE_URL/medications/api/prescription_details/$pid/',
             ),
-            headers: const {'Accept': 'application/json'},
+            headers: {
+              'Accept': 'application/json',
+              'X-User-Id': currentUserId.toString(),
+            },
           )
           .timeout(const Duration(seconds: 15));
 
-      final rawResponse = utf8.decode(response.bodyBytes);
-      final data = json.decode(rawResponse);
+      Map<String, dynamic>? data;
+      try {
+        final decoded = json.decode(utf8.decode(response.bodyBytes));
+        if (decoded is Map) {
+          data = Map<String, dynamic>.from(decoded);
+        }
+      } catch (e) {
+        debugPrint('藥單詳情 response 解析失敗: $e');
+      }
 
       final isTransportSuccess =
           response.statusCode >= 200 && response.statusCode < 300;
-      if (isTransportSuccess &&
-          data is Map &&
-          data['status'] == 'success' &&
-          data['data'] is List) {
+      if (response.statusCode == 401) {
+        _prescriptionDetailError = '登入資訊已失效，請重新登入';
+      } else if (response.statusCode == 403) {
+        final backendMessage = data?['message'];
+        _prescriptionDetailError = backendMessage is String &&
+                backendMessage.trim().isNotEmpty
+            ? backendMessage.trim()
+            : '你沒有權限查看此藥單';
+      } else if (isTransportSuccess &&
+          data?['status'] == 'success' &&
+          data?['data'] is List) {
         if (!mounted) return;
         setState(() {
-          _meds = List<dynamic>.from(data['data']);
+          _meds = List<dynamic>.from(data!['data']);
           _hasSevereDanger = _meds.any(
             (m) => m is Map && m['is_severe_danger'] == true,
           );
         });
       } else {
-        final backendMessage = data is Map ? data['message'] : null;
+        final backendMessage = data?['message'];
         _prescriptionDetailError = backendMessage is String &&
                 backendMessage.trim().isNotEmpty
             ? backendMessage.trim()
@@ -2125,7 +2154,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getInt('user_id');
-      if (userId == null) {
+      if (userId == null || userId <= 0) {
         loadFailed = true;
         missingUser = true;
       } else {
@@ -2248,7 +2277,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('user_id');
-      if (userId == null) {
+      if (userId == null || userId <= 0) {
         loadFailed = true;
       } else {
         final response = await http
@@ -2256,6 +2285,10 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
               Uri.parse(
                 '$API_BASE_URL/medications/api/prescriptions/$userId/',
               ),
+              headers: {
+                'Accept': 'application/json',
+                'X-User-Id': userId.toString(),
+              },
             )
             .timeout(const Duration(seconds: 15));
         final data = json.decode(utf8.decode(response.bodyBytes));
@@ -2988,26 +3021,56 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
   // 🌟 2. 當選取某張藥單時，獲取其底下的所有藥品明細
   Future<void> _fetchDrugsForPrescription(int prescriptionId) async {
     List<dynamic>? loadedDrugs;
+    String? loadError;
 
     try {
-      final response = await http
-          .get(
-            Uri.parse(
-              '$API_BASE_URL/medications/api/prescription_details/$prescriptionId/',
-            ),
-          )
-          .timeout(const Duration(seconds: 15));
-      final data = json.decode(utf8.decode(response.bodyBytes));
+      final prefs = await SharedPreferences.getInstance();
+      final currentUserId = prefs.getInt('user_id');
+      if (currentUserId == null || currentUserId <= 0) {
+        loadError = '登入資訊已失效，請重新登入';
+      } else {
+        final response = await http
+            .get(
+              Uri.parse(
+                '$API_BASE_URL/medications/api/prescription_details/$prescriptionId/',
+              ),
+              headers: {
+                'Accept': 'application/json',
+                'X-User-Id': currentUserId.toString(),
+              },
+            )
+            .timeout(const Duration(seconds: 15));
+        Map<String, dynamic>? data;
+        try {
+          final decoded = json.decode(utf8.decode(response.bodyBytes));
+          if (decoded is Map) data = Map<String, dynamic>.from(decoded);
+        } catch (e) {
+          debugPrint('提醒藥單詳情 response 解析失敗: $e');
+        }
 
-      if (response.statusCode >= 200 &&
-          response.statusCode < 300 &&
-          data is Map &&
-          data['status'] == 'success' &&
-          data['data'] is List) {
-        loadedDrugs = List<dynamic>.from(data['data']);
+        final backendMessage = data?['message'];
+        if (response.statusCode == 401) {
+          loadError = '登入資訊已失效，請重新登入';
+        } else if (response.statusCode == 403) {
+          loadError = backendMessage is String &&
+                  backendMessage.trim().isNotEmpty
+              ? backendMessage.trim()
+              : '你沒有權限查看此藥單';
+        } else if (response.statusCode >= 200 &&
+            response.statusCode < 300 &&
+            data?['status'] == 'success' &&
+            data?['data'] is List) {
+          loadedDrugs = List<dynamic>.from(data!['data']);
+        } else {
+          loadError = backendMessage is String &&
+                  backendMessage.trim().isNotEmpty
+              ? backendMessage.trim()
+              : '無法載入藥單詳情';
+        }
       }
     } catch (e) {
       debugPrint('獲取藥品明細失敗: $e');
+      loadError = '無法載入藥單詳情';
     }
 
     if (!mounted || _selectedPrescriptionId != prescriptionId) return;
@@ -3017,6 +3080,9 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
       _applySavedRemindersToEditor();
       _isDrugsLoading = false;
     });
+    if (loadError != null) {
+      _showReminderMessage(loadError, isError: true);
+    }
   }
 
   // 🌟 3. 核心演算法：依照藥品服用頻率自動分群，並初始化預設 Tag 與時間
@@ -4121,12 +4187,14 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
   int? _currentUserId;
   int? _currentGroupId;
   String? _currentGroupName;
+  String? _currentGroupRole;
   String? _currentInviteCode;
   List<Map<String, dynamic>> _groupMembers = [];
   bool _isRestoringGroup = true;
   bool _isCreatingGroup = false;
   bool _isJoiningGroup = false;
   bool _isMembersLoading = false;
+  bool _isRegeneratingInviteCode = false;
   String? _membersError;
   int? _openingMemberUserId;
 
@@ -4167,6 +4235,8 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
     final storedGroupUserId =
         _parseGroupPositiveInt(prefs.get('group_user_id'));
     final storedGroupName = prefs.getString('group_name');
+    final storedGroupRole = prefs.getString('group_role');
+    final storedInviteCode = prefs.getString('invite_code');
 
     if (!mounted) return;
     if (userId == null) {
@@ -4187,21 +4257,50 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
               storedGroupName.trim().isNotEmpty
           ? storedGroupName.trim()
           : null;
-      _isRestoringGroup = false;
+      _currentGroupRole = belongsToCurrentUser &&
+              storedGroupRole != null &&
+              storedGroupRole.trim().isNotEmpty
+          ? storedGroupRole.trim()
+          : null;
+      _currentInviteCode = belongsToCurrentUser &&
+              storedInviteCode != null &&
+              storedInviteCode.trim().isNotEmpty
+          ? storedInviteCode.trim()
+          : null;
     });
 
     if (belongsToCurrentUser && storedGroupId != null) {
-      await _fetchGroupMembers(storedGroupId);
+      final loaded = await _fetchGroupMembers(storedGroupId);
+      if (!loaded) {
+        await _recoverCurrentUserGroup();
+      }
+    } else {
+      await _recoverCurrentUserGroup();
+    }
+
+    if (mounted) {
+      setState(() => _isRestoringGroup = false);
     }
   }
 
-  Future<void> _persistCurrentGroup(int groupId, String groupName) async {
+  Future<void> _persistCurrentGroup(
+    int groupId,
+    String groupName, {
+    required String groupRole,
+    String? inviteCode,
+  }) async {
     final userId = _currentUserId;
     if (userId == null) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('group_id', groupId);
     await prefs.setString('group_name', groupName);
     await prefs.setInt('group_user_id', userId);
+    await prefs.setString('group_role', groupRole);
+    if (inviteCode != null && inviteCode.trim().isNotEmpty) {
+      await prefs.setString('invite_code', inviteCode.trim());
+    } else {
+      await prefs.remove('invite_code');
+    }
   }
 
   Future<Map<String, dynamic>?> _postGroupRequest(
@@ -4242,6 +4341,138 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
     return null;
   }
 
+  Map<String, dynamic>? _extractRecoveredGroup(dynamic rawData) {
+    dynamic candidate;
+    if (rawData == null) return null;
+
+    if (rawData is List) {
+      if (rawData.isEmpty) return null;
+      if (rawData.length != 1) {
+        throw const FormatException('帳號包含多個群組，無法自動判定目前群組');
+      }
+      candidate = rawData.first;
+    } else if (rawData is Map) {
+      final data = Map<String, dynamic>.from(rawData);
+      if (data.containsKey('group_id')) {
+        candidate = data;
+      } else if (data['group'] is Map) {
+        candidate = data['group'];
+      } else if (data.containsKey('group') && data['group'] == null) {
+        return null;
+      } else if (data['groups'] is List) {
+        final groups = data['groups'] as List;
+        if (groups.isEmpty) return null;
+        if (groups.length != 1) {
+          throw const FormatException('帳號包含多個群組，無法自動判定目前群組');
+        }
+        candidate = groups.first;
+      } else if (data.isEmpty || data['has_group'] == false) {
+        return null;
+      }
+    }
+
+    if (candidate is! Map) {
+      throw const FormatException('群組資料格式不正確');
+    }
+    return Map<String, dynamic>.from(candidate);
+  }
+
+  Future<void> _clearPersistedGroup() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('group_id');
+    await prefs.remove('group_name');
+    await prefs.remove('group_user_id');
+    await prefs.remove('group_role');
+    await prefs.remove('invite_code');
+  }
+
+  Future<void> _recoverCurrentUserGroup() async {
+    final userId = _currentUserId;
+    if (userId == null) {
+      if (mounted) {
+        setState(() => _membersError = '登入資訊已失效，請重新登入');
+      }
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _isMembersLoading = true;
+        _membersError = null;
+      });
+    }
+
+    String errorMessage = '無法恢復群組資料，請稍後再試';
+    try {
+      final responseData = await _postGroupRequest(
+        '/accounts/api/user/groups/',
+        {'user_id': userId},
+      );
+      if (responseData == null) {
+        throw FormatException(errorMessage);
+      }
+
+      final group = _extractRecoveredGroup(responseData['data']);
+      if (group == null) {
+        await _clearPersistedGroup();
+        if (!mounted) return;
+        setState(() {
+          _currentGroupId = null;
+          _currentGroupName = null;
+          _currentGroupRole = null;
+          _currentInviteCode = null;
+          _groupMembers = [];
+          _isMembersLoading = false;
+          _membersError = null;
+        });
+        return;
+      }
+
+      final groupId = _parseGroupPositiveInt(group['group_id']);
+      final rawGroupName = group['group_name'];
+      final rawGroupRole = group['group_role'];
+      final rawInviteCode = group['invite_code'];
+      final inviteCode = rawInviteCode is String &&
+              rawInviteCode.trim().isNotEmpty
+          ? rawInviteCode.trim()
+          : null;
+      if (groupId == null ||
+          rawGroupName is! String ||
+          rawGroupName.trim().isEmpty ||
+          rawGroupRole is! String ||
+          rawGroupRole.trim().isEmpty ||
+          (rawInviteCode != null && rawInviteCode is! String)) {
+        throw const FormatException('群組資料格式不正確');
+      }
+
+      await _persistCurrentGroup(
+        groupId,
+        rawGroupName.trim(),
+        groupRole: rawGroupRole.trim(),
+        inviteCode: inviteCode,
+      );
+      if (!mounted) return;
+      setState(() {
+        _currentGroupId = groupId;
+        _currentGroupName = rawGroupName.trim();
+        _currentGroupRole = rawGroupRole.trim();
+        _currentInviteCode = inviteCode;
+      });
+      await _fetchGroupMembers(groupId);
+      return;
+    } on FormatException catch (e) {
+      errorMessage = e.message;
+    } catch (e) {
+      debugPrint('恢復群組資料失敗: $e');
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isMembersLoading = false;
+      _membersError = errorMessage;
+    });
+  }
+
   Future<void> _createGroup() async {
     if (_isCreatingGroup || _isJoiningGroup) return;
     final userId = _currentUserId;
@@ -4272,11 +4503,17 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
             returnedName.trim().isNotEmpty &&
             inviteCode is String &&
             inviteCode.trim().isNotEmpty) {
-          await _persistCurrentGroup(groupId, returnedName.trim());
+          await _persistCurrentGroup(
+            groupId,
+            returnedName.trim(),
+            groupRole: 'owner',
+            inviteCode: inviteCode.trim(),
+          );
           if (!mounted) return;
           setState(() {
             _currentGroupId = groupId;
             _currentGroupName = returnedName.trim();
+            _currentGroupRole = 'owner';
             _currentInviteCode = inviteCode.trim();
             _groupNameController.clear();
           });
@@ -4326,11 +4563,16 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
         if (groupId != null &&
             returnedName is String &&
             returnedName.trim().isNotEmpty) {
-          await _persistCurrentGroup(groupId, returnedName.trim());
+          await _persistCurrentGroup(
+            groupId,
+            returnedName.trim(),
+            groupRole: 'member',
+          );
           if (!mounted) return;
           setState(() {
             _currentGroupId = groupId;
             _currentGroupName = returnedName.trim();
+            _currentGroupRole = 'member';
             _currentInviteCode = null;
             _inviteCodeController.clear();
           });
@@ -4353,7 +4595,7 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
     _showGroupMessage(errorMessage, isError: true);
   }
 
-  Future<void> _fetchGroupMembers(int groupId) async {
+  Future<bool> _fetchGroupMembers(int groupId) async {
     final userId = _currentUserId;
     if (userId == null || groupId <= 0) {
       if (mounted) {
@@ -4364,7 +4606,7 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
               : '無法載入群組成員';
         });
       }
-      return;
+      return false;
     }
 
     setState(() {
@@ -4383,12 +4625,14 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
         final returnedGroupId = _parseGroupPositiveInt(data['group_id']);
         final returnedGroupName = data['group_name'];
         final rawMembers = data['members'];
+        final rawInviteCode = data['invite_code'];
         if (returnedGroupId == groupId &&
             returnedGroupName is String &&
             returnedGroupName.trim().isNotEmpty &&
             rawMembers is List) {
           final parsedMembers = <Map<String, dynamic>>[];
           bool hasInvalidMember = false;
+          String? requesterRole;
           for (final rawMember in rawMembers) {
             if (rawMember is! Map) {
               hasInvalidMember = true;
@@ -4415,19 +4659,36 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
             member['nickname'] = nickname is String ? nickname.trim() : '';
             member['group_role'] = role.trim();
             member['joined_at'] = joinedAt is String ? joinedAt.trim() : '';
+            if (memberUserId == userId) {
+              requesterRole = role.trim();
+            }
             parsedMembers.add(member);
           }
 
-          if (!hasInvalidMember) {
-            await _persistCurrentGroup(groupId, returnedGroupName.trim());
-            if (!mounted || _currentGroupId != groupId) return;
+          if (!hasInvalidMember &&
+              requesterRole != null &&
+              (rawInviteCode == null || rawInviteCode is String)) {
+            final inviteCode = requesterRole == 'owner' &&
+                    rawInviteCode is String &&
+                    rawInviteCode.trim().isNotEmpty
+                ? rawInviteCode.trim()
+                : null;
+            await _persistCurrentGroup(
+              groupId,
+              returnedGroupName.trim(),
+              groupRole: requesterRole,
+              inviteCode: inviteCode,
+            );
+            if (!mounted || _currentGroupId != groupId) return false;
             setState(() {
               _currentGroupName = returnedGroupName.trim();
+              _currentGroupRole = requesterRole;
+              _currentInviteCode = inviteCode;
               _groupMembers = parsedMembers;
               _isMembersLoading = false;
               _membersError = null;
             });
-            return;
+            return true;
           }
         }
       }
@@ -4437,11 +4698,92 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
       debugPrint('載入群組成員失敗: $e');
     }
 
-    if (!mounted || _currentGroupId != groupId) return;
+    if (!mounted || _currentGroupId != groupId) return false;
     setState(() {
       _isMembersLoading = false;
       _membersError = errorMessage;
     });
+    return false;
+  }
+
+  Future<void> _refreshGroupMembers() async {
+    final groupId = _currentGroupId;
+    if (groupId == null) {
+      await _recoverCurrentUserGroup();
+      return;
+    }
+    final loaded = await _fetchGroupMembers(groupId);
+    if (!loaded) {
+      await _recoverCurrentUserGroup();
+    }
+  }
+
+  Future<void> _confirmRegenerateInviteCode() async {
+    if (_currentGroupRole != 'owner' || _isRegeneratingInviteCode) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('重新產生邀請碼'),
+        content: const Text('重新產生後，舊邀請碼將失效，確定要繼續嗎？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.teal),
+            child: const Text('確定'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _regenerateInviteCode();
+    }
+  }
+
+  Future<void> _regenerateInviteCode() async {
+    final userId = _currentUserId;
+    final groupId = _currentGroupId;
+    if (_currentGroupRole != 'owner' || userId == null || groupId == null) {
+      return;
+    }
+
+    setState(() => _isRegeneratingInviteCode = true);
+    String errorMessage = '重新產生邀請碼失敗，請稍後再試';
+    try {
+      final responseData = await _postGroupRequest(
+        '/accounts/api/group/invite_code/',
+        {
+          'user_id': userId,
+          'group_id': groupId,
+          'regenerate': true,
+        },
+      );
+      final data = responseData?['data'];
+      final rawInviteCode = data is Map
+          ? data['invite_code']
+          : responseData?['invite_code'];
+      if (rawInviteCode is! String || rawInviteCode.trim().isEmpty) {
+        throw const FormatException('邀請碼回應格式不正確');
+      }
+
+      final inviteCode = rawInviteCode.trim();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('invite_code', inviteCode);
+      if (!mounted) return;
+      setState(() => _currentInviteCode = inviteCode);
+      _showGroupMessage('邀請碼已重新產生');
+      return;
+    } on FormatException catch (e) {
+      errorMessage = e.message;
+    } catch (e) {
+      debugPrint('重新產生邀請碼失敗: $e');
+    } finally {
+      if (mounted) setState(() => _isRegeneratingInviteCode = false);
+    }
+    _showGroupMessage(errorMessage, isError: true);
   }
 
   Future<void> _openMemberPrescriptions(
@@ -4703,7 +5045,7 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
                 )
               : RefreshIndicator(
                   color: Colors.teal,
-                  onRefresh: () => _fetchGroupMembers(_currentGroupId!),
+                  onRefresh: _refreshGroupMembers,
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.all(18),
@@ -4727,39 +5069,75 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              if (_currentInviteCode != null) ...[
+                              if (_currentInviteCode != null ||
+                                  _currentGroupRole == 'owner') ...[
                                 const SizedBox(height: 12),
-                                Row(
+                                Text(
+                                  _currentInviteCode != null
+                                      ? '邀請碼：$_currentInviteCode'
+                                      : '邀請碼尚未提供',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 4,
                                   children: [
-                                    Expanded(
-                                      child: Text(
-                                        '邀請碼：$_currentInviteCode',
-                                        style: const TextStyle(
+                                    if (_currentInviteCode != null)
+                                      TextButton.icon(
+                                        onPressed: () async {
+                                          await Clipboard.setData(
+                                            ClipboardData(
+                                              text: _currentInviteCode!,
+                                            ),
+                                          );
+                                          _showGroupMessage('邀請碼已複製');
+                                        },
+                                        icon: const Icon(
+                                          Icons.copy,
                                           color: Colors.white,
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
+                                          size: 18,
+                                        ),
+                                        label: const Text(
+                                          '複製',
+                                          style: TextStyle(color: Colors.white),
                                         ),
                                       ),
-                                    ),
-                                    TextButton.icon(
-                                      onPressed: () async {
-                                        await Clipboard.setData(
-                                          ClipboardData(
-                                            text: _currentInviteCode!,
+                                    if (_currentGroupRole == 'owner')
+                                      TextButton.icon(
+                                        onPressed: _isRegeneratingInviteCode
+                                            ? null
+                                            : _confirmRegenerateInviteCode,
+                                        icon: _isRegeneratingInviteCode
+                                            ? const SizedBox(
+                                                width: 16,
+                                                height: 16,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: Colors.white,
+                                                ),
+                                              )
+                                            : const Icon(
+                                                Icons.refresh,
+                                                color: Colors.white,
+                                                size: 18,
+                                              ),
+                                        label: Text(
+                                          _isRegeneratingInviteCode
+                                              ? '產生中'
+                                              : '重新產生',
+                                          style: TextStyle(
+                                            color: _isRegeneratingInviteCode
+                                                ? Colors.white70
+                                                : Colors.white,
                                           ),
-                                        );
-                                        _showGroupMessage('邀請碼已複製');
-                                      },
-                                      icon: const Icon(
-                                        Icons.copy,
-                                        color: Colors.white,
-                                        size: 18,
+                                        ),
                                       ),
-                                      label: const Text(
-                                        '複製',
-                                        style: TextStyle(color: Colors.white),
-                                      ),
-                                    ),
                                   ],
                                 ),
                               ],
@@ -4796,8 +5174,7 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
                             ),
                             const SizedBox(height: 10),
                             OutlinedButton.icon(
-                              onPressed: () =>
-                                  _fetchGroupMembers(_currentGroupId!),
+                              onPressed: _refreshGroupMembers,
                               icon: const Icon(Icons.refresh),
                               label: const Text('重新載入'),
                             ),
@@ -4877,12 +5254,21 @@ class _GroupMemberPrescriptionsPageState
     List<Map<String, dynamic>>? loadedPrescriptions;
     String errorMessage = '無法載入此成員的藥單';
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final currentUserId = prefs.getInt('user_id');
+      if (currentUserId == null || currentUserId <= 0) {
+        errorMessage = '登入資訊已失效，請重新登入';
+        throw const FormatException('missing current user id');
+      }
       final response = await http
           .get(
             Uri.parse(
               '$API_BASE_URL/medications/api/prescriptions/${widget.memberUserId}/',
             ),
-            headers: const {'Accept': 'application/json'},
+            headers: {
+              'Accept': 'application/json',
+              'X-User-Id': currentUserId.toString(),
+            },
           )
           .timeout(const Duration(seconds: 15));
 
@@ -4932,9 +5318,20 @@ class _GroupMemberPrescriptionsPageState
           parsedItems.add(item);
         }
         if (!hasInvalidItem) loadedPrescriptions = parsedItems;
+      } else if (response.statusCode == 401) {
+        errorMessage = '登入資訊已失效，請重新登入';
+      } else if (response.statusCode == 403) {
+        errorMessage = backendMessage is String &&
+                backendMessage.trim().isNotEmpty
+            ? backendMessage.trim()
+            : '你沒有權限查看此藥單';
       } else if (backendMessage is String &&
           backendMessage.trim().isNotEmpty) {
         errorMessage = backendMessage.trim();
+      }
+    } on FormatException catch (e) {
+      if (e.message != 'missing current user id') {
+        debugPrint('群組成員藥單 response 解析失敗: $e');
       }
     } catch (e) {
       debugPrint('載入成員藥單失敗: $e');
