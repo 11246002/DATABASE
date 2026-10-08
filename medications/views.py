@@ -235,22 +235,45 @@ def get_user_prescriptions_api(request, user_id):
 def get_prescription_detail_api(request, prescription_id):
     if request.method == 'GET':
         try:
+            # 取得處方主檔
+            prescription = Prescription.objects.filter(prescription_id=prescription_id).first()
+            if not prescription:
+                return JsonResponse({'status': 'error', 'message': '找不到該藥單'}, status=404)
+
             # 找出這張藥單的所有藥品明細
-            drugs_in_p = PrescriptionDrug.objects.filter(prescription_id=prescription_id)
+            drugs_in_p = PrescriptionDrug.objects.filter(prescription=prescription)
             
+            # 🌟 呼叫全域用藥安全檢查，取得跨處方衝突與過敏標記
+            safety_map = {}
+            try:
+                is_ok, safety_results = check_user_medication_safety(prescription.user_id)
+                if is_ok and isinstance(safety_results, list):
+                    for s_item in safety_results:
+                        safety_map[s_item.get('prescription_drug_id')] = s_item
+            except Exception as se:
+                print(f"安全檢查快取失敗: {se}")
+
             detailed_data = []
             for item in drugs_in_p:
-                # 處理警告紀錄 (加上檢查，避免 item.drug 是空的)
-                warning_list = []
-                if item.drug:
-                    warnings = DrugWarning.objects.filter(drug=item.drug)
-                    for w in warnings:
-                        warning_list.append({
-                            "conflict_target": w.conflict_target,
-                            "warning_desc": w.warning_desc
-                        })
+                safety_info = safety_map.get(item.id)
+                if safety_info:
+                    warning_list = safety_info.get('warnings', [])
+                    is_severe = safety_info.get('is_severe_danger', False)
+                else:
+                    warning_list = []
+                    is_severe = False
+                    if item.drug:
+                        warnings = DrugWarning.objects.filter(drug=item.drug)
+                        for w in warnings:
+                            warning_list.append({
+                                "conflict_target": w.conflict_target,
+                                "warning_desc": w.warning_desc,
+                                "is_drug_conflict": False,
+                                "is_allergy_conflict": False,
+                                "conflicting_drug_names": []
+                            })
                 
-                #  組合藥品資訊 (加上 id，並處理藥品可能為空的狀況)
+                # 組合藥品資訊 (加上 is_severe_danger 與豐富的警告屬性)
                 detailed_data.append({
                     "id": item.id, 
                     "raw_name": item.raw_name,
@@ -259,7 +282,9 @@ def get_prescription_detail_api(request, prescription_id):
                     "frequency": item.frequency,
                     "total_amount": item.total_amount,
                     "days": item.days,
+                    "remaining_amount": item.remaining_amount,
                     "indications": item.drug.indications if item.drug else "請諮詢醫師或藥師了解用途",
+                    "is_severe_danger": is_severe,
                     "warnings": warning_list
                 })
                 
