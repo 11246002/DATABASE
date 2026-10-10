@@ -17,6 +17,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 // 網頁開發建議改為 127.0.0.1 或 localhost，避免跨網域問題
 const String API_BASE_URL = 'http://127.0.0.1:8000';
 
+// 🌟 [暫時測試] 長輩大字體全域開關 (預設標準 1.0x，開啟時 1.28x)
+final ValueNotifier<bool> isLargeFontNotifier = ValueNotifier<bool>(false);
+
 late List<CameraDescription> cameras;
 
 Future<void> main() async {
@@ -27,21 +30,36 @@ Future<void> main() async {
     debugPrint('相機錯誤: ${e.code}, ${e.description}');
   }
 
-  runApp(MaterialApp(
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      primarySwatch: Colors.teal,
-      scaffoldBackgroundColor: const Color(0xFFF5F7F9),
-    ),
-    scrollBehavior: const MaterialScrollBehavior().copyWith(
-      dragDevices: {
-        PointerDeviceKind.mouse,
-        PointerDeviceKind.touch,
-        PointerDeviceKind.trackpad,
+  runApp(
+    ValueListenableBuilder<bool>(
+      valueListenable: isLargeFontNotifier,
+      builder: (context, isLargeFont, _) {
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            primarySwatch: Colors.teal,
+            scaffoldBackgroundColor: const Color(0xFFF5F7F9),
+          ),
+          scrollBehavior: const MaterialScrollBehavior().copyWith(
+            dragDevices: {
+              PointerDeviceKind.mouse,
+              PointerDeviceKind.touch,
+              PointerDeviceKind.trackpad,
+            },
+          ),
+          builder: (context, child) {
+            return MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(isLargeFont ? 1.28 : 1.0),
+              ),
+              child: child!,
+            );
+          },
+          home: const LoginPage(),
+        );
       },
     ),
-    home: const LoginPage(),
-  ));
+  );
 }
 
 // --- 頁面 1: 歡迎頁面 ---
@@ -78,6 +96,7 @@ class _LoginPageState extends State<LoginPage> {
         SharedPreferences prefs = await SharedPreferences.getInstance();
         await prefs.setInt('user_id', int.parse(data['data']['user_id'].toString()));
         await prefs.setString('token', data['data']['token'].toString());
+        await prefs.setString('user_name', _usernameCtrl.text.trim());
         if (!mounted) return;
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const MainAppPage()));
       } else {
@@ -495,10 +514,43 @@ class ScanPrescriptionSheet extends StatefulWidget {
 class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
   CameraController? _controller;
   final ImagePicker _picker = ImagePicker(); 
+  // 🌟 [暫時測試] 方案 A：藥袋姓名防呆確認開關
+  bool _isConfirmedPatientName = false;
+  String _currentUserName = '本人';
 
   @override
   void initState() {
     super.initState();
+    SharedPreferences.getInstance().then((prefs) async {
+      final cachedName = prefs.getString('nickname') ?? prefs.getString('user_name');
+      if (cachedName != null && cachedName.isNotEmpty && mounted) {
+        setState(() => _currentUserName = cachedName);
+      }
+      final userId = prefs.getInt('user_id');
+      if (userId != null && userId > 0) {
+        try {
+          final res = await http.post(
+            Uri.parse('$API_BASE_URL/accounts/api/user/profile/'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({"user_id": userId}),
+          );
+          if (res.statusCode == 200) {
+            final data = json.decode(utf8.decode(res.bodyBytes));
+            if (data['status'] == 'success' && data['data'] != null) {
+              final p = data['data'];
+              final name = (p['nickname'] != null && p['nickname'].toString().trim().isNotEmpty)
+                  ? p['nickname'].toString().trim()
+                  : ((p['user_name'] != null && p['user_name'].toString().trim().isNotEmpty)
+                      ? p['user_name'].toString().trim()
+                      : '本人');
+              if (mounted) {
+                setState(() => _currentUserName = name);
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    });
     if (cameras.isNotEmpty) {
       _controller = CameraController(cameras[0], ResolutionPreset.high);
       _controller!.initialize().then((_) { if (mounted) setState(() {}); });
@@ -520,11 +572,31 @@ class _ScanPrescriptionSheetState extends State<ScanPrescriptionSheet> {
   }
 
   Future<void> _pickImageFromGallery() async {
+    if (!_isConfirmedPatientName) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('請先確認藥袋姓名與身分相符！'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
     if (image != null) _processImage(image);
   }
 
   Future<void> _takePicture() async {
+    if (!_isConfirmedPatientName) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('請先確認藥袋姓名與身分相符！'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
     if (_controller == null || !_controller!.value.isInitialized) return;
     if (_controller!.value.isTakingPicture) return;
     try {
@@ -875,6 +947,71 @@ content: Column(
                 ],
               ),
             ),
+            
+            // 🌟 [暫時測試] 藥袋身分核對確認卡片（核對後自動移除不擋鏡頭）
+            if (!_isConfirmedPatientName)
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFFBEB),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.verified_user_outlined, color: Color(0xFFD97706), size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '請先核對藥單身分("$_currentUserName")',
+                            style: const TextStyle(
+                              color: Color(0xFF92400E),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      '拍照前請先確認藥單姓名是否相符',
+                      style: TextStyle(color: Color(0xFFB45309), fontSize: 13),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.check, size: 18),
+                        label: const Text('我已確認姓名相符，開始拍照', style: TextStyle(fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFD97706),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _isConfirmedPatientName = true;
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('已確認身分相符，請對準藥單拍照'),
+                              backgroundColor: Colors.teal,
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             
             Expanded(
               child: Container(
@@ -4238,6 +4375,9 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
   String? _currentGroupRole;
   String? _currentInviteCode;
   List<Map<String, dynamic>> _groupMembers = [];
+  // 🌟 [暫時測試] 群組服藥動態與逾期統計
+  List<Map<String, dynamic>> _groupActivities = [];
+  int _overdueCount = 0;
   bool _isRestoringGroup = true;
   bool _isCreatingGroup = false;
   bool _isJoiningGroup = false;
@@ -4736,6 +4876,7 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
               _isMembersLoading = false;
               _membersError = null;
             });
+            _fetchGroupActivities(groupId);
             return true;
           }
         }
@@ -4754,12 +4895,43 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
     return false;
   }
 
+  Future<void> _fetchGroupActivities(int groupId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('user_id');
+      if (userId == null || userId <= 0) return;
+
+      final response = await http.get(
+        Uri.parse('$API_BASE_URL/accounts/api/group/$groupId/activities/'),
+        headers: {
+          'Accept': 'application/json',
+          'X-User-Id': userId.toString(),
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final resData = json.decode(response.body);
+        final data = resData['data'];
+        if (mounted && data != null) {
+          setState(() {
+            _overdueCount = data['overdue_count'] ?? 0;
+            _groupActivities =
+                List<Map<String, dynamic>>.from(data['activities'] ?? []);
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('取得群組服藥動態失敗: $e');
+    }
+  }
+
   Future<void> _refreshGroupMembers() async {
     final groupId = _currentGroupId;
     if (groupId == null) {
       await _recoverCurrentUserGroup();
       return;
     }
+    _fetchGroupActivities(groupId);
     final loaded = await _fetchGroupMembers(groupId);
     if (!loaded) {
       await _recoverCurrentUserGroup();
@@ -4949,6 +5121,85 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildGroupActivityCard() {
+    if (_groupActivities.isEmpty) return const SizedBox.shrink();
+
+    final hasOverdue = _overdueCount > 0;
+    final cardBg = hasOverdue ? const Color(0xFFFFF4F2) : const Color(0xFFF0FDF4);
+    final borderColor = hasOverdue ? const Color(0xFFFCA5A5) : const Color(0xFF86EFAC);
+    final titleColor = hasOverdue ? const Color(0xFFDC2626) : const Color(0xFF16A34A);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor, width: 1.2),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                hasOverdue ? Icons.warning_amber_rounded : Icons.check_circle_outline,
+                color: titleColor,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                hasOverdue
+                    ? '今日用藥警示 ($_overdueCount 筆逾期未服)'
+                    : '今日群組成員用藥動態良好',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                  color: titleColor,
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 18),
+          ..._groupActivities.map((act) {
+            final isOverdue = act['status'] == 'overdue';
+            final itemColor = isOverdue ? const Color(0xFFDC2626) : const Color(0xFF16A34A);
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    isOverdue ? Icons.cancel_outlined : Icons.check_circle,
+                    size: 16,
+                    color: itemColor,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${act['member_name']}｜${act['drug_name']}：',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      act['message'] ?? '',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: isOverdue ? const Color(0xFFB91C1C) : Colors.black87,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
       ),
     );
   }
@@ -5194,6 +5445,7 @@ class _FamilyGroupPageState extends State<FamilyGroupPage> {
                         ),
                       ),
                       const SizedBox(height: 18),
+                      _buildGroupActivityCard(),
                       const Text(
                         '群組成員',
                         style: TextStyle(
@@ -6511,11 +6763,22 @@ class _AppSettingsPageState extends State<AppSettingsPage> {
           onChanged: (val) => setState(() => isNotify = val),
         ),
         _buildGroupTitle('個人化顯示'),
-        SwitchListTile(
-          secondary: const Icon(Icons.format_size, color: Colors.blue),
-          title: const Text('大字體模式'),
-          value: isLargeFont,
-          onChanged: (val) => setState(() => isLargeFont = val),
+        ValueListenableBuilder<bool>(
+          valueListenable: isLargeFontNotifier,
+          builder: (context, isLarge, _) {
+            return SwitchListTile(
+              secondary: const Icon(Icons.format_size, color: Colors.blue),
+              title: const Text('大字體模式'),
+              subtitle: Text(
+                isLarge ? '目前為長輩大字體 (1.28x)' : '目前為標準字體',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              value: isLarge,
+              onChanged: (val) {
+                isLargeFontNotifier.value = val;
+              },
+            );
+          },
         ),
         _buildGroupTitle('資料管理'),
         ListTile(leading: const Icon(Icons.cloud_upload_outlined, color: Colors.orange), title: const Text('同步雲端資料庫'), onTap: () {}),
