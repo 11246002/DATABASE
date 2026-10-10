@@ -4,6 +4,8 @@ from django.shortcuts import render
 import json
 import random
 import string
+from datetime import datetime, timedelta
+from django.utils import timezone
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import make_password, check_password
@@ -451,3 +453,185 @@ def manage_invite_code_api(request, group_id=None):
         }, status=200)
     except Exception as e:
         return JsonResponse({'status': 'error', 'message': f"系統錯誤: {str(e)}"}, status=500)
+
+
+def get_authenticated_user_id(request, data=None):
+    """
+    從 Request Header (Authorization)、Query Param 或 Body 取得 user_id
+    支援:
+    1. Header: Authorization: Bearer session_token_<user_id> 或 Bearer <user_id>
+    2. Header: X-User-Id: <user_id>
+    3. Body: {"user_id": <user_id>, ...}
+    4. Query Param: ?user_id=<user_id>
+    """
+    auth_header = request.headers.get('Authorization') or request.META.get('HTTP_AUTHORIZATION')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1].strip()
+        if token.startswith('session_token_'):
+            try:
+                return int(token.replace('session_token_', ''))
+            except ValueError:
+                pass
+        elif token.isdigit():
+            return int(token)
+
+    x_uid = request.headers.get('X-User-Id') or request.META.get('HTTP_X_USER_ID')
+    if x_uid and str(x_uid).isdigit():
+        return int(x_uid)
+
+    if data and 'user_id' in data:
+        try:
+            return int(data['user_id'])
+        except (ValueError, TypeError):
+            pass
+
+    uid = request.GET.get('user_id') or request.POST.get('user_id')
+    if uid:
+        try:
+            return int(uid)
+        except (ValueError, TypeError):
+            pass
+
+    if hasattr(request, 'user') and request.user and request.user.is_authenticated and hasattr(request.user, 'user_id'):
+        return request.user.user_id
+
+    return None
+
+
+# ==========================================
+# 取得群組成員服藥動態 API (今日打卡與逾期未服聚合)
+# ==========================================
+@csrf_exempt
+def get_group_medication_activities_api(request, group_id):
+    """
+    群組成員服藥動態聚合 API [GET]
+    路徑: GET /accounts/api/group/<int:group_id>/activities/
+    處理流程:
+      1. 安全檢查：確認發出請求的成員是否在此群組內（防越權 IDOR）
+      2. 撈取群組成員：找出該群組的所有家人（例如爸爸、媽媽）
+      3. 比對今日鬧鐘與打卡：
+         - 🟢 已服藥項目 (status: "taken")：今天有打卡記錄 ➡️ 記錄實際吃藥時間（如 12:35）
+         - 🔴 逾期未服項目 (status: "overdue")：今天無打卡記錄且現在時間 > 預計服藥時間 + 30 分鐘 ➡️ 標記為逾期未服
+      4. 統計 overdue_count、taken_count 並回傳 activities 清單
+    """
+    if request.method != 'GET':
+        return JsonResponse({'status': 'error', 'message': '請使用 GET 方法'}, status=405)
+
+    try:
+        # 1. 安全檢查：獲取發起請求的使用者 user_id
+        user_id = get_authenticated_user_id(request)
+        if not user_id:
+            return JsonResponse({
+                'status': 'error',
+                'message': '缺少必要的使用者驗證資訊 (請帶入 user_id 參數或 Authorization Header)'
+            }, status=401)
+
+        # 檢查群組是否存在
+        group = Group.objects.filter(group_id=group_id).first()
+        if not group:
+            return JsonResponse({'status': 'error', 'message': f'找不到編號為 {group_id} 的群組'}, status=404)
+
+        # 防越權檢查：確認請求者是否為該群組成員
+        if not GroupMember.objects.filter(group=group, user_id=user_id).exists():
+            return JsonResponse({'status': 'error', 'message': '您不是此群組的成員，無權查看成員服藥動態'}, status=403)
+
+        # 2. 撈取群組成員
+        group_members = GroupMember.objects.filter(group=group).select_related('user')
+        member_user_ids = [gm.user.user_id for gm in group_members]
+
+        # 3. 比對今日鬧鐘與打卡
+        today = timezone.localdate()
+        now = timezone.localtime()
+
+        from medications.models import Remind, TakingRecord
+
+        # 撈取群組成員有效且未被軟刪除的提醒紀錄 (JOIN prescription_drug, prescription, user)
+        reminds = Remind.objects.filter(
+            prescription_drug__prescription__user_id__in=member_user_ids,
+            is_active=True,
+            is_deleted=False
+        ).select_related(
+            'prescription_drug',
+            'prescription_drug__prescription',
+            'prescription_drug__prescription__user'
+        ).order_by('remind_time')
+
+        # 批次查詢群組成員當日打卡紀錄
+        taking_records = TakingRecord.objects.filter(
+            remind__in=reminds,
+            record_date=today
+        ).order_by('-taken_at')
+
+        # 建立 Map: remind_id -> TakingRecord
+        records_map = {tr.remind_id: tr for tr in taking_records}
+
+        activities = []
+
+        for remind in reminds:
+            p_drug = remind.prescription_drug
+            prescription = p_drug.prescription
+            member = prescription.user
+
+            # 處方箋有效天數範圍檢查 (start_date ~ end_date)
+            start_date = remind.start_date
+            end_date = remind.end_date
+            if start_date and p_drug.days and p_drug.days > 0:
+                if not (start_date <= today <= end_date):
+                    continue  # 不在處方給藥天數範圍內，略過
+
+            member_name = member.nickname if member.nickname else member.user_name
+            drug_name = p_drug.raw_name
+            tag = remind.frequency_tag
+
+            tr = records_map.get(remind.remind_id)
+
+            # 🟢 狀況一：已服藥項目 (status: "taken")
+            if tr and tr.status in ['已吃', 'taken', '已服藥']:
+                taken_time_str = timezone.localtime(tr.taken_at).strftime('%H:%M') if tr.taken_at else ""
+                activities.append({
+                    'member_name': member_name,
+                    'status': 'taken',
+                    'drug_name': drug_name,
+                    'taken_at': taken_time_str,
+                    'message': f'已於 {taken_time_str} 完成服藥',
+                    'tag': tag
+                })
+                continue
+
+            # 🔴 狀況二：逾期未服項目 (status: "overdue")
+            # 條件：今天尚未打卡，且 現在時間 > 預計服藥時間 + 30 分鐘寬限期
+            if remind.remind_time:
+                naive_dt = datetime.combine(today, remind.remind_time)
+                expected_dt = timezone.make_aware(naive_dt, timezone.get_current_timezone())
+                grace_dt = expected_dt + timedelta(minutes=30)
+
+                if now > grace_dt:
+                    expected_time_str = remind.remind_time.strftime('%H:%M')
+                    activities.append({
+                        'member_name': member_name,
+                        'status': 'overdue',
+                        'drug_name': drug_name,
+                        'expected_time': expected_time_str,
+                        'message': f'預定 {expected_time_str} 服藥，已逾期未吃！',
+                        'tag': tag
+                    })
+
+        # 計算統計數量
+        overdue_count = sum(1 for a in activities if a['status'] == 'overdue')
+        taken_count = sum(1 for a in activities if a['status'] == 'taken')
+
+        # 排序：逾期未吃 (overdue) 排在最前面，方便照護者第一時間掌握警報
+        activities.sort(key=lambda x: (0 if x['status'] == 'overdue' else 1))
+
+        # 4. 回傳標準結構
+        return JsonResponse({
+            'status': 'success',
+            'data': {
+                'overdue_count': overdue_count,
+                'taken_count': taken_count,
+                'activities': activities
+            }
+        }, status=200)
+
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': f'系統錯誤: {str(e)}'}, status=500)

@@ -30,4 +30,7 @@ urlpatterns = [
     # 群組邀請碼查詢與重整 (限 Owner)
     path('api/group/invite_code/', views.manage_invite_code_api, name='manage_invite_code'),
     path('api/group/<int:group_id>/invite_code/', views.manage_invite_code_api, name='manage_invite_code_by_id'),
+
+    # 取得群組成員服藥動態 (今日已服 / 逾期未服)
+    path('api/group/<int:group_id>/activities/', views.get_group_medication_activities_api, name='get_group_medication_activities'),
 ]
