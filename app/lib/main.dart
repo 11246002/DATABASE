@@ -15,7 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // 🌟 2. 新增的變數：因為你用網頁版測試，所以直接用 127.0.0.1 即可！
 // 網頁開發建議改為 127.0.0.1 或 localhost，避免跨網域問題
-const String API_BASE_URL = 'http://127.0.0.1:8000';
+const String API_BASE_URL = 'http://192.168.0.12:8000';
 
 // 🌟 [暫時測試] 長輩大字體全域開關 (預設標準 1.0x，開啟時 1.28x)
 final ValueNotifier<bool> isLargeFontNotifier = ValueNotifier<bool>(false);
@@ -131,12 +131,7 @@ class _LoginPageState extends State<LoginPage> {
               ),
               const SizedBox(height: 15),
               const Text('智慧藥管家', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.teal, letterSpacing: 2)),
-              const SizedBox(height: 40),
-              
-              const Align(alignment: Alignment.centerLeft, child: Text('歡迎回來', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87))),
-              const SizedBox(height: 10),
-              const Align(alignment: Alignment.centerLeft, child: Text('請輸入您的帳號密碼以繼續使用', style: TextStyle(fontSize: 15, color: Colors.grey))),
-              const SizedBox(height: 30),
+              const SizedBox(height: 18),
               
               // 綁定你原本的 Controller
               _buildCleanInput('帳號', Icons.person_outline, _usernameCtrl, false),
@@ -948,78 +943,88 @@ content: Column(
               ),
             ),
             
-            // 🌟 [暫時測試] 藥袋身分核對確認卡片（核對後自動移除不擋鏡頭）
-            if (!_isConfirmedPatientName)
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFFBEB),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.verified_user_outlined, color: Color(0xFFD97706), size: 20),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '請先核對藥單身分("$_currentUserName")',
-                            style: const TextStyle(
-                              color: Color(0xFF92400E),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    color: Colors.black,
+                    child: (_controller != null && _controller!.value.isInitialized)
+                        ? CameraPreview(_controller!)
+                        : const Center(child: CircularProgressIndicator(color: Colors.teal)),
+                  ),
+                  // 🌟 藥袋身分核對確認卡片（核對後自動移除不擋鏡頭）
+                  if (!_isConfirmedPatientName)
+                    Positioned.fill(
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 22),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFFBEB),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.verified_user_outlined, color: Color(0xFFD97706), size: 20),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        '請先核對藥單身分("$_currentUserName")',
+                                        style: const TextStyle(
+                                          color: Color(0xFF92400E),
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                const Text(
+                                  '拍照前請先確認藥單姓名是否相符',
+                                  style: TextStyle(color: Color(0xFFB45309), fontSize: 13),
+                                ),
+                                const SizedBox(height: 10),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton.icon(
+                                    icon: const Icon(Icons.check, size: 18),
+                                    label: const Text('我已確認姓名相符，開始拍照', style: TextStyle(fontWeight: FontWeight.bold)),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFFD97706),
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                    ),
+                                    onPressed: () {
+                                      setState(() {
+                                        _isConfirmedPatientName = true;
+                                      });
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('已確認身分相符，請對準藥單拍照'),
+                                          backgroundColor: Colors.teal,
+                                          duration: Duration(seconds: 1),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      '拍照前請先確認藥單姓名是否相符',
-                      style: TextStyle(color: Color(0xFFB45309), fontSize: 13),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.check, size: 18),
-                        label: const Text('我已確認姓名相符，開始拍照', style: TextStyle(fontWeight: FontWeight.bold)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFD97706),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _isConfirmedPatientName = true;
-                          });
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('已確認身分相符，請對準藥單拍照'),
-                              backgroundColor: Colors.teal,
-                              duration: Duration(seconds: 1),
-                            ),
-                          );
-                        },
                       ),
                     ),
-                  ],
-                ),
-              ),
-            
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                color: Colors.black,
-                child: (_controller != null && _controller!.value.isInitialized) 
-                    ? CameraPreview(_controller!) 
-                    : const Center(child: CircularProgressIndicator(color: Colors.teal)),
+                ],
               ),
             ),
 
@@ -1029,20 +1034,29 @@ content: Column(
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(icon: const Icon(Icons.photo_library, color: Colors.white, size: 32), onPressed: _pickImageFromGallery),
-                      const Text('相簿上傳', style: TextStyle(color: Colors.white, fontSize: 12)),
-                    ],
+                  Opacity(
+                    opacity: _isConfirmedPatientName ? 1 : 0.4,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.photo_library, color: Colors.white, size: 32),
+                          onPressed: _isConfirmedPatientName ? _pickImageFromGallery : null,
+                        ),
+                        const Text('相簿上傳', style: TextStyle(color: Colors.white, fontSize: 12)),
+                      ],
+                    ),
                   ),
-                  GestureDetector(
-                    onTap: _takePicture,
-                    child: Container(
-                      width: 75, height: 75, 
-                      decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 4)),
-                      child: Center(
-                        child: Container(width: 60, height: 60, decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle)),
+                  Opacity(
+                    opacity: _isConfirmedPatientName ? 1 : 0.4,
+                    child: GestureDetector(
+                      onTap: _isConfirmedPatientName ? _takePicture : null,
+                      child: Container(
+                        width: 75, height: 75,
+                        decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 4)),
+                        child: Center(
+                          child: Container(width: 60, height: 60, decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle)),
+                        ),
                       ),
                     ),
                   ),
@@ -1483,18 +1497,16 @@ void _showSafetyResultDialog(List<dynamic> dangerList) {
                     child: Container(
                       height: 45, alignment: Alignment.center, decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(10)),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center, 
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.filter_list, size: 18, color: Colors.teal), 
+                          const Icon(Icons.filter_list, size: 18, color: Colors.teal),
                           const SizedBox(width: 5),
-                          // 💡 修正 2：用 Expanded 包住文字，並且加上自動變「...」
-                          Expanded(
-                            child: Text(
-                              _currentFilter == '全部時間' ? '篩選' : _currentFilter.substring(0, 2), 
-                              style: const TextStyle(color: Colors.teal, fontWeight: FontWeight.bold), 
-                              overflow: TextOverflow.ellipsis, // 🌟 自動變「...」
-                              maxLines: 1 // 🌟 只顯示一行
-                            ),
+                          Text(
+                            _currentFilter == '全部時間' ? '篩選' : _currentFilter.substring(0, 2),
+                            style: const TextStyle(color: Colors.teal, fontWeight: FontWeight.bold),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
                           ),
                         ],
                       ),
@@ -2900,27 +2912,6 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '今天',
-                style: TextStyle(
-                  color: Colors.teal,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _todayDate ?? '',
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 15),
-              ),
-            ],
-          ),
-        ),
         if (_todaySkippedInvalidCount > 0)
           Container(
             width: double.infinity,
