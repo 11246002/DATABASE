@@ -9,6 +9,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'services/notification_service.dart';
+import 'services/reminder_notification_sync_service.dart';
 
 // 🌟 1. 新增的套件：用來把 Token 存在瀏覽器記憶體裡
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,6 +26,7 @@ late List<CameraDescription> cameras;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.instance.initialize();
   try {
     cameras = await availableCameras();
   } on CameraException catch (e) {
@@ -97,6 +100,7 @@ class _LoginPageState extends State<LoginPage> {
         await prefs.setInt('user_id', int.parse(data['data']['user_id'].toString()));
         await prefs.setString('token', data['data']['token'].toString());
         await prefs.setString('user_name', _usernameCtrl.text.trim());
+        await NotificationService.instance.requestNotificationPermission();
         if (!mounted) return;
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const MainAppPage()));
       } else {
@@ -417,6 +421,16 @@ class _MainAppPageState extends State<MainAppPage> {
     const AppSettingsPage(),
     const UserProfilePage(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(
+      ReminderNotificationSyncService.instance.syncCurrentUserReminders(
+        apiBaseUrl: API_BASE_URL,
+      ),
+    );
+  }
 
   // 全螢幕向上滑出動畫
   void _openScannerSheet() {
@@ -3386,6 +3400,31 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
 
     if (!succeeded) {
       _showReminderMessage(errorMessage, isError: true);
+      return;
+    }
+
+    try {
+      if (!confirmedValue) {
+        await NotificationService.instance.cancelMedicationReminder(remindId);
+      } else {
+        final confirmedReminder = Map<String, dynamic>.from(reminder)
+          ..['is_active'] = confirmedValue;
+        final notificationReminder =
+            MedicationReminderNotification.tryParse(confirmedReminder);
+        if (notificationReminder != null) {
+          await NotificationService.instance
+              .rescheduleMedicationReminder(notificationReminder);
+        } else {
+          final result = await ReminderNotificationSyncService.instance
+              .syncCurrentUserReminders(apiBaseUrl: API_BASE_URL);
+          if (!result.succeeded) {
+            throw StateError(result.message ?? 'Reminder sync failed');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('本機服藥通知同步失敗: $e');
+      _showReminderMessage('提醒設定已更新，但本機通知同步失敗', isError: true);
     }
   }
 
@@ -3486,11 +3525,19 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
         }
       }
 
+      if (succeeded) {
+        try {
+          await NotificationService.instance.cancelMedicationReminder(remindId);
+        } catch (e) {
+          debugPrint('刪除後取消本機服藥通知失敗: $e');
+          _showReminderMessage('提醒已刪除，但本機通知取消失敗', isError: true);
+        }
+      }
       if (succeeded &&
           mounted &&
           _selectedPrescriptionId == prescriptionId) {
         if (successMessage != null) {
-          _showReminderMessage(successMessage!);
+          _showReminderMessage(successMessage);
         }
         await _fetchRemindersForPrescription(prescriptionId);
       }
@@ -3640,6 +3687,15 @@ if (isTransportSuccess && responseData?['status'] == 'success') {
   // 重新整理目前藥單的提醒設定
   if (_selectedPrescriptionId == prescriptionId) {
     await _fetchRemindersForPrescription(prescriptionId);
+  }
+
+  final notificationSync = await ReminderNotificationSyncService.instance
+      .syncCurrentUserReminders(apiBaseUrl: API_BASE_URL);
+  if (!notificationSync.succeeded && !notificationSync.skipped) {
+    _showReminderMessage(
+      '提醒已儲存，但本機通知同步失敗，請稍後重新開啟 App',
+      isError: true,
+    );
   }
 } else {
         _showReminderMessage(
