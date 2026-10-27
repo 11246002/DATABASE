@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('accounts', '0002_alter_groupmember_id'),
+        ('accounts', '0002_devicetoken_overduenotificationlog'),
         ('medications', '0001_initial'),
     ]
 
