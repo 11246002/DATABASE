@@ -33,4 +33,12 @@ urlpatterns = [
 
     # 取得群組成員服藥動態 (今日已服 / 逾期未服)
     path('api/group/<int:group_id>/activities/', views.get_group_medication_activities_api, name='get_group_medication_activities'),
+
+    # 註冊/更新裝置推播 Token (FCM Push)
+    path('api/device_token/', views.register_device_token_api, name='register_device_token'),
+    path('api/user/<int:user_id>/device_tokens/', views.get_user_device_tokens_api, name='get_user_device_tokens'),
+
+    # 展場展示專用：手動觸發逾時示警推播
+    path('api/demo/trigger_push/', views.trigger_demo_overdue_push_api, name='trigger_demo_overdue_push_all'),
+    path('api/demo/trigger_push/<int:group_id>/', views.trigger_demo_overdue_push_api, name='trigger_demo_overdue_push_group'),
 ]

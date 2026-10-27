@@ -1,0 +1,228 @@
+1. 批次設定整張藥單的吃藥鬧鐘
+URL：/medications/api/reminders/set/
+Method：POST
+前端場景：在「提醒設定」頁面，長輩設定好各餐時間後點擊「儲存設定」。
+Request (JSON)：
+json
+{
+  "user_id": 3,
+  "prescription_id": 1,
+  "drugs": [
+    {
+      "prescription_drug_id": 1,
+      "reminders": [
+        {"frequency_tag": "早飯後", "remind_time": "08:30:00", "is_active": true},
+        {"frequency_tag": "午飯後", "remind_time": "12:30:00", "is_active": true},
+        {"frequency_tag": "晚飯後", "remind_time": "18:30:00", "is_active": true}
+      ]
+    },
+    {
+      "prescription_drug_id": 2,
+      "reminders": [
+        {"frequency_tag": "睡前", "remind_time": "21:30:00", "is_active": true}
+      ]
+    }
+  ]
+}
+Response (200 / 201)：
+json
+{
+  "status": "success",
+  "message": "已成功批次設定完成，新增 4 筆、更新 0 筆提醒紀錄",
+  "data": { "created_count": 4, "updated_count": 0 }
+}
+2. 取得特定藥單已設定的提醒列表
+URL：/medications/api/reminders/list/
+Method：GET
+前端場景：進入該張藥單詳情時，讀取並還原先前儲存的鬧鐘時間、天數與是否過期。
+Query Params：
+prescription_id (必填，int)：處方箋 ID
+user_id (必填，int)：使用者 ID
+active_only (選填，bool)：是否只抓啟用且未過期的鬧鐘，預設 false
+Response (200)：
+json
+{
+  "status": "success",
+  "data": [
+    {
+      "remind_id": 12,
+      "prescription_drug_id": 1,
+      "raw_name": "Amoxicillin 500mg",
+      "frequency_tag": "早飯後",
+      "remind_time": "08:30:00",
+      "is_active": true,
+      "is_expired": false,
+      "start_date": "2026-09-15",
+      "end_date": "2026-09-21"
+    }
+  ]
+}
+3. 今日（或指定日期）跨藥單用藥日程匯總
+URL：/medications/api/reminders/today/
+Method：GET（或 POST）
+前端場景：App 首頁 / 今日服藥儀表板。聚合今天所有該吃的藥，依時間由早到晚排好，並標註今天吃了沒。
+Query Params：
+user_id (必填，int)：使用者 ID
+date (選填，string)：查詢日期 YYYY-MM-DD（預設為今天）
+active_only (選填，bool)：是否排除過期藥物，預設 true
+Response (200)：
+json
+{
+  "status": "success",
+  "date": "2026-09-19",
+  "user_id": 3,
+  "total_count": 2,
+  "data": [
+    {
+      "remind_id": 12,
+      "remind_time": "08:30:00",
+      "frequency_tag": "早飯後",
+      "status": "已吃",
+      "taken_at": "2026-09-19 08:35:12",
+      "takingrecord_id": 45,
+      "is_active": true,
+      "is_expired": false,
+      "is_in_range": true,
+      "prescription_drug_id": 1,
+      "raw_name": "Amoxicillin 500mg",
+      "med_ch": "安默西林膠囊",
+      "remaining_amount": 18,
+      "hospital_name": "台大醫院",
+      "start_date": "2026-09-15",
+      "end_date": "2026-09-21"
+    },
+    {
+      "remind_id": 13,
+      "remind_time": "12:30:00",
+      "frequency_tag": "午飯後",
+      "status": "未吃",
+      "taken_at": null,
+      "takingrecord_id": null,
+      "is_active": true,
+      "is_expired": false,
+      "is_in_range": true,
+      "prescription_drug_id": 1,
+      "raw_name": "Amoxicillin 500mg",
+      "med_ch": "安默西林膠囊",
+      "remaining_amount": 18,
+      "hospital_name": "台大醫院",
+      "start_date": "2026-09-15",
+      "end_date": "2026-09-21"
+    }
+  ]
+}
+4. 單獨切換鬧鐘開關（啟用 / 暫停）
+URL：/medications/api/reminders/<remind_id>/toggle/
+Method：POST
+前端場景：使用者在鬧鐘列表點擊 Switch 開關（例如今天中午不想被吵）。
+Request (JSON，選填)：
+json
+{
+  "user_id": 3,
+  "is_active": false
+}
+(備註：若未傳 is_active，後端會自動反轉開關狀態)
+Response (200)：
+json
+{
+  "status": "success",
+  "message": "鬧鐘已成功關閉",
+  "data": {
+    "remind_id": 12,
+    "is_active": false,
+    "frequency_tag": "早飯後",
+    "remind_time": "08:30:00"
+  }
+}
+5. 單獨刪除鬧鐘（軟刪除保護歷史）
+URL：/medications/api/reminders/<remind_id>/delete/
+Method：DELETE（或 POST）
+前端場景：使用者手動向左滑動刪除某一餐的鬧鐘。
+Request (JSON / Header)：帶入 user_id
+Response (200)：
+json
+{
+  "status": "success",
+  "message": "已成功刪除鬧鐘：Amoxicillin 500mg (早飯後 08:30:00)",
+  "data": { "remind_id": 12, "is_active": false }
+}
+6. 服藥打卡與回報（已吃 / 略過）
+URL：/medications/api/history/record/
+Method：POST
+前端場景：手機鬧鐘響起，彈出視窗讓長輩點擊「已吃」或「略過」。標記「已吃」後端會自動扣減該藥剩餘顆數。
+Request (JSON)：
+json
+{
+  "user_id": 3,
+  "remind_id": 12,
+  "status": "已吃",
+  "record_date": "2026-09-19",
+  "actual_taken_at": "2026-09-19 08:32:00",
+  "force": false
+}
+status：限定 "已吃" 或 "略過"
+record_date (選填)：哪一天的打卡，若在隔天凌晨補打卡可帶此欄位
+force (選填，bool)：若當天已打過卡是否強制更新，預設 false
+Response 成功 (200 / 201)：
+json
+{
+  "status": "success",
+  "message": "吃藥紀錄已成功寫入資料庫",
+  "data": {
+    "takingrecord_id": 46,
+    "status": "已吃",
+    "taken_at": "2026-09-19 08:32:00",
+    "remaining_amount": 17
+  }
+}
+Response 重複打卡防呆 (400)：
+json
+{
+  "status": "error",
+  "message": "請勿重複打卡！此鬧鐘時段已於 08:32:00 記錄為「已吃」"
+}
+7. 服藥遵從率統計與歷史趨勢報表
+URL：/medications/api/history/stats/
+Method：GET
+前端場景：個人健康報表 / 家屬遠端監護頁面。繪製每週服藥折線圖、圓餅圖與評級標章。
+Query Params：
+user_id (必填，int)：使用者 ID
+days (選填，int)：統計最近天數，預設 7
+start_date / end_date (選填，string)：自訂區間 YYYY-MM-DD
+Response (200)：
+json
+{
+  "status": "success",
+  "user_id": 3,
+  "start_date": "2026-09-13",
+  "end_date": "2026-09-19",
+  "days_analyzed": 7,
+  "summary": {
+    "total_expected": 21,
+    "total_taken": 18,
+    "total_skipped": 2,
+    "total_missed": 1,
+    "adherence_rate": 85.7,
+    "rating": "良好 (偶有遺漏)"
+  },
+  "daily_stats": [
+    {
+      "date": "2026-09-19",
+      "expected_count": 3,
+      "taken_count": 3,
+      "skipped_count": 0,
+      "missed_count": 0,
+      "adherence_rate": 100.0
+    }
+  ],
+  "recent_history": [
+    {
+      "takingrecord_id": 46,
+      "remind_id": 12,
+      "drug_name": "Amoxicillin 500mg",
+      "frequency_tag": "早飯後",
+      "status": "已吃",
+      "taken_at": "2026-09-19 08:32:00"
+    }
+  ]
+}

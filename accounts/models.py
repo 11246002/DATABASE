@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
+from django.utils import timezone
 
 # 專屬管理員製造機 (UserManager)
 # 負責處理「建立帳號」與「密碼加密」的底層邏輯
@@ -57,6 +58,7 @@ class User(AbstractBaseUser):
     def has_module_perms(self, app_label):
         return True
 
+
 class Group(models.Model):
     group_id = models.AutoField(primary_key=True)
     group_name = models.CharField(max_length=100)
@@ -84,3 +86,45 @@ class GroupMember(models.Model):
 
     def __str__(self):
         return f"{self.user} in {self.group}"
+
+
+# ==========================================
+# 裝置推播 Token (FCM 跨手機系統通知)
+# ==========================================
+class DeviceToken(models.Model):
+    device_token_id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='device_tokens')
+    fcm_token = models.CharField(max_length=255, unique=True)
+    platform = models.CharField(max_length=20, default='android') # 'android' / 'ios' / 'web'
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = '裝置推播 Token'
+        verbose_name_plural = '裝置推播 Token 列表'
+
+    def __str__(self):
+        return f"{self.user.user_name} ({self.platform}): {self.fcm_token[:20]}..."
+
+
+# ==========================================
+# 逾時未服藥通知日誌 (防呆：同鬧鐘同天僅通知一次)
+# ==========================================
+class OverdueNotificationLog(models.Model):
+    log_id = models.AutoField(primary_key=True)
+    remind = models.ForeignKey('medications.Remind', on_delete=models.CASCADE, related_name='overdue_logs')
+    record_date = models.DateField(default=timezone.localdate)
+    sent_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = '逾時服藥推播日誌'
+        verbose_name_plural = '逾時服藥推播日誌列表'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['remind', 'record_date'],
+                name='unique_remind_overdue_log_per_day'
+            )
+        ]
+
+    def __str__(self):
+        return f"Remind #{self.remind_id} Overdue Alert on {self.record_date}"

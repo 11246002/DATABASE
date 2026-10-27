@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import make_password, check_password
-from .models import User, Group, GroupMember
+from .models import User, Group, GroupMember, DeviceToken, OverdueNotificationLog
 
 # ==========================================
 # 一般使用者註冊 API 
@@ -635,3 +635,133 @@ def get_group_medication_activities_api(request, group_id):
 
     except Exception as e:
         return JsonResponse({'status': 'error', 'message': f'系統錯誤: {str(e)}'}, status=500)
+
+
+# ==========================================
+# 裝置推播 Token 註冊 API (FCM Push)
+# ==========================================
+@csrf_exempt
+def register_device_token_api(request):
+    """
+    前端登入或啟動時註冊/更新手機 FCM 裝置 Token [POST]
+    URL: /accounts/api/device_token/
+    Body:
+    {
+        "user_id": 3,
+        "fcm_token": "c_xxxxxx",
+        "platform": "android"  # android / ios / web
+    }
+    """
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': '請使用 POST 方法'}, status=405)
+
+    try:
+        data = json.loads(request.body) if request.body else {}
+        user_id = data.get('user_id')
+        fcm_token = data.get('fcm_token')
+        platform = data.get('platform', 'android')
+
+        if not user_id:
+            return JsonResponse({'status': 'error', 'message': '缺少必要參數 user_id'}, status=400)
+        if not fcm_token or not str(fcm_token).strip():
+            return JsonResponse({'status': 'error', 'message': '缺少必要參數 fcm_token'}, status=400)
+
+        user = User.objects.filter(user_id=user_id).first()
+        if not user:
+            return JsonResponse({'status': 'error', 'message': f'找不到編號為 {user_id} 的使用者'}, status=404)
+
+        token_obj, created = DeviceToken.objects.update_or_create(
+            fcm_token=str(fcm_token).strip(),
+            defaults={
+                'user': user,
+                'platform': str(platform).lower()
+            }
+        )
+
+        return JsonResponse({
+            'status': 'success',
+            'message': '裝置 Token 註冊成功' if created else '裝置 Token 更新成功',
+            'data': {
+                'device_token_id': token_obj.device_token_id,
+                'user_id': user.user_id,
+                'platform': token_obj.platform,
+                'fcm_token_preview': f"{token_obj.fcm_token[:20]}..."
+            }
+        }, status=201 if created else 200)
+
+    except json.JSONDecodeError:
+        return JsonResponse({'status': 'error', 'message': 'JSON 格式解析失敗'}, status=400)
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': f'系統錯誤: {str(e)}'}, status=500)
+
+
+@csrf_exempt
+def get_user_device_tokens_api(request, user_id):
+    """
+    查詢特定使用者的裝置 Token 列表 (方便開發除錯與確認是否綁定成功) [GET]
+    URL: /accounts/api/user/<int:user_id>/device_tokens/
+    """
+    if request.method != 'GET':
+        return JsonResponse({'status': 'error', 'message': '請使用 GET 方法'}, status=405)
+
+    tokens = DeviceToken.objects.filter(user_id=user_id).order_by('-updated_at')
+    return JsonResponse({
+        'status': 'success',
+        'user_id': user_id,
+        'count': tokens.count(),
+        'tokens': [
+            {
+                'device_token_id': t.device_token_id,
+                'platform': t.platform,
+                'updated_at': t.updated_at.strftime('%Y-%m-%d %H:%M:%S'),
+                'fcm_token_preview': f"{t.fcm_token[:25]}..."
+            }
+            for t in tokens
+        ]
+    }, status=200)
+
+
+# ==========================================
+# 展場展示 / 測試專用：手動觸發逾時示警推播 API
+# ==========================================
+@csrf_exempt
+def trigger_demo_overdue_push_api(request, group_id=None):
+    """
+    展場現場展示專用觸發器 [POST/GET]
+    URL: /accounts/api/demo/trigger_push/ 或 /accounts/api/demo/trigger_push/<int:group_id>/
+    參數 (選填):
+      - force: true (強制忽視30分鐘限制與已發送日誌，現場立即觸發模擬通知)
+      - grace_minutes: 自訂寬限分鐘 (預設 30)
+    """
+    from . import notifications
+
+    force = True
+    grace_minutes = 30
+
+    if request.method == 'POST' and request.body:
+        try:
+            data = json.loads(request.body)
+            force = data.get('force', True)
+            grace_minutes = int(data.get('grace_minutes', 30))
+        except Exception:
+            pass
+    elif request.method == 'GET':
+        force = request.GET.get('force', 'true').lower() in ['true', '1']
+        try:
+            grace_minutes = int(request.GET.get('grace_minutes', 30))
+        except ValueError:
+            grace_minutes = 30
+
+    try:
+        result = notifications.check_and_send_overdue_alerts(
+            target_group_id=group_id,
+            force=force,
+            simulated_grace_minutes=grace_minutes
+        )
+        return JsonResponse({
+            'status': 'success',
+            'message': '逾時推播掃描與發送已觸發完成',
+            'data': result
+        }, status=200)
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': f'推播觸發失敗: {str(e)}'}, status=500)
